@@ -1,0 +1,46 @@
+{
+  "name": "uploadpdf",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "node --watch ./src/index.js --mode=dev",
+    "prod": "node --watch ./src/index.js --mode=prod"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@azure/search-documents": "^12.1.0",
+    "@langchain/textsplitters": "^0.1.0",
+    "axios": "^1.7.7",
+    "commander": "^12.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "langchain": "^0.3.5",
+    "mammoth": "^1.8.0",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.72.0",
+    "pdf.js-extract": "^0.2.1",
+    "punycode": "^2.3.1",
+    "punycode.js": "^2.3.1",
+    "socket.io": "^4.8.1",
+    "tiktoken": "^1.0.17",
+    "winston": "^3.17.0",
+    "word-extractor": "^1.0.4"
+    , "@azure/cosmos": "^3.17.3"
+    , "botbuilder": "^4.19.3"
+    , "botbuilder-dialogs": "^4.19.3"
+    , "botbuilder-azure": "^4.19.3"
+    , "luxon": "^3.3.0"
+    , "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0"
+  }
+}
