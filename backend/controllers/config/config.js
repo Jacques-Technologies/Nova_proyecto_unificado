@@ -54,15 +54,14 @@ export const config = {
   // variables de entorno.  No se proporcionan valores por defecto, de
   // manera que si algún valor falta se obtendrá `undefined` y los módulos
   // consumidores podrán manejar el error apropiadamente.
-  AZURE_OPENAI_ENDPOINT: process.env.AZURE_OPENAI_ENDPOINT,
-  AZURE_OPENAI_KEY: process.env.AZURE_OPENAI_KEY,
-  AZURE_OPENAI_DEPLOYMENT: process.env.AZURE_OPENAI_DEPLOYMENT,
-  AZURE_OPENAI_MODEL: process.env.AZURE_OPENAI_MODEL,
-  AZURE_OPENAI_API_VERSION: process.env.AZURE_OPENAI_API_VERSION,
-  AZURE_OPENAI_API_INSTANCE_NAME: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
+  AZURE_OPENAI_ENDPOINT: process.env.OPENAI_ENDPOINT,
+  AZURE_OPENAI_KEY: process.env.OPENAI_API_KEY,
+  AZURE_OPENAI_DEPLOYMENT: 'text-embedding-3-large',
+  AZURE_OPENAI_MODEL: 'text-embedding-3-large',
+  AZURE_OPENAI_API_VERSION: '2024-12-01-preview',
 
   // Configuración de Azure Search
   AZURE_SEARCH_ENDPOINT: process.env.AZURE_SEARCH_ENDPOINT,
-  AZURE_SEARCH_KEY: process.env.AZURE_SEARCH_KEY,
+  AZURE_SEARCH_KEY: process.env.AZURE_SEARCH_API_KEY,
   AZURE_SEARCH_INDEX_NAME: process.env.AZURE_SEARCH_INDEX_NAME
 };

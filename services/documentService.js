@@ -25,7 +25,7 @@ class DocumentService {
         try {
             const endpoint = process.env.AZURE_SEARCH_ENDPOINT;
             const apiKey = process.env.AZURE_SEARCH_API_KEY;
-            const indexName = 'nova';
+            const indexName = process.env.AZURE_SEARCH_INDEX_NAME
 
             if (!endpoint || !apiKey) {
                 throw new Error('Variables AZURE_SEARCH_ENDPOINT y AZURE_SEARCH_API_KEY requeridas');

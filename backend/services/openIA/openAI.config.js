@@ -5,11 +5,11 @@ import { config } from "../../controllers/config/config.js";
  * Cliente de Azure OpenAI usando el SDK oficial de OpenAI con soporte Azure
  */
 export const openAIClient = new OpenAI({
-  apiKey: config.AZURE_OPENAI_KEY,
-  baseURL: `${config.AZURE_OPENAI_ENDPOINT}/openai/deployments/${config.AZURE_OPENAI_DEPLOYMENT}`,
-  defaultQuery: { 'api-version': config.AZURE_OPENAI_API_VERSION },
+  apiKey: config.OPENAI_API_KEY,
+  baseURL: `${config.OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
+  defaultQuery: { 'api-version': '2024-12-01-preview' },
   defaultHeaders: {
-    'api-key': config.AZURE_OPENAI_KEY,
+    'api-key': config.OPENAI_API_KEY,
   },
 });
 
@@ -194,10 +194,8 @@ function adjustEmbeddingDimensions(embedding, targetDimensions) {
  */
 export function validateConfiguration() {
   const requiredConfigs = [
-    'AZURE_OPENAI_KEY',
-    'AZURE_OPENAI_ENDPOINT', 
-    'AZURE_OPENAI_DEPLOYMENT',
-    'AZURE_OPENAI_API_VERSION'
+    'OPENAI_API_KEY',
+    'OPENAI_ENDPOINT'
   ];
   
   const missing = requiredConfigs.filter(key => !config[key]);
