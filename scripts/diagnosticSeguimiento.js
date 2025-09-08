@@ -4,6 +4,8 @@ import 'dotenv/config';
 import seguimientoService from '../services/seguimientoService.js';
 import cosmosService from '../services/cosmosService.js';
 
+const seguimientoService = new SeguimientoService();
+const cosmosService = new CosmosService();
 /**
  * Script para diagnosticar el sistema de seguimiento
  */

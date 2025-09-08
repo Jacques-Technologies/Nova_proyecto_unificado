@@ -3,6 +3,7 @@
 import 'dotenv/config';
 import cosmosService from '../services/cosmosService.js';
 
+const cosmosService = new cosmosService();
 /**
  * Script de prueba para verificar el formato de conversación
  */

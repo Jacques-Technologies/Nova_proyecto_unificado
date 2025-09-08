@@ -4,6 +4,7 @@ import 'dotenv/config';
 import cosmosService from '../services/cosmosService.js';
 import { DateTime } from 'luxon';
 
+const cosmosService = new cosmosService();
 /**
  * Script de migración para convertir conversaciones existentes al nuevo formato OpenAI
  */
