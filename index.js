@@ -17,8 +17,6 @@
  * `.env.example` para una lista de variables necesarias.
  */
 
-require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
 
