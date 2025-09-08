@@ -1,11 +1,18 @@
-// dialogBot.js - Versión simplificada sin OAuth/Azure
+// dialogBot.js - Versión corregida con importaciones correctas
 
-import TeamsActivityHandler from 'botbuilder';
+// OPCIÓN 1: Si usas botbuilder-teams
+import { TeamsActivityHandler } from 'botbuilder-teams';
+
+// OPCIÓN 2: Si usas solo botbuilder
+// import { ActivityHandler } from 'botbuilder';
 
 /**
  * DialogBot - Clase base simplificada
  */
 export default class DialogBot extends TeamsActivityHandler {
+    // Si usas OPCIÓN 2, cambia la línea anterior por:
+    // export default class DialogBot extends ActivityHandler {
+    
     constructor(conversationState, userState) {
         super();
 
@@ -205,5 +212,3 @@ export default class DialogBot extends TeamsActivityHandler {
         return !!(this.conversationState && this.userState);
     }
 }
-
-module.exports=DialogBot;
