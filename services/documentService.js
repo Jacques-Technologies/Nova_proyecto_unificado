@@ -329,5 +329,3 @@ export default class DocumentService {
     }
 }
 
-// Crear instancia singleton
-const documentService = new DocumentService();
