@@ -1,0 +1,139 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "2.1.1",
+  "id": "dcd9ce45-96c3-43ad-986c-c7e063d0651e",
+  "developer": {
+    "name": "Nova Corporation",
+    "websiteUrl": "https://www.nova.com.mx",
+    "privacyUrl": "https://www.nova.com.mx/privacy",
+    "termsOfUseUrl": "https://www.nova.com.mx/terms"
+  },
+  "icons": {
+    "color": "nova-icon-color.png",
+    "outline": "nova-icon-outline.png"
+  },
+  "name": {
+    "short": "Nova Bot",
+    "full": "Nova Corporation Assistant Bot"
+  },
+  "description": {
+    "short": "Asistente corporativo inteligente de Nova Corporation",
+    "full": "Nova Bot es un asistente corporativo avanzado que proporciona acceso a información financiera, documentos corporativos, políticas de empresa, y chat inteligente con IA. Incluye consulta de tasas de interés, búsqueda de documentos, información de empleados y funcionalidades de productividad empresarial."
+  },
+  "accentColor": "#0078D4",
+  "bots": [
+    {
+      "botId": "dcd9ce45-96c3-43ad-986c-c7e063d0651e",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "supportsCalling": false,
+      "supportsVideo": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupchat"
+          ],
+          "commands": [
+            {
+              "title": "Ayuda",
+              "description": "Muestra los comandos disponibles y funcionalidades del bot"
+            },
+            {
+              "title": "Mi información",
+              "description": "Consulta tu información personal y estado de sesión"
+            },
+            {
+              "title": "Tasas 2025",
+              "description": "Consulta las tasas de interés actuales de Nova Corporation"
+            },
+            {
+              "title": "Buscar documentos",
+              "description": "Busca en la base de documentos corporativos"
+            },
+            {
+              "title": "Políticas",
+              "description": "Consulta políticas de empresa (vacaciones, horarios, prestaciones)"
+            },
+            {
+              "title": "Feriados",
+              "description": "Consulta los días feriados oficiales"
+            },
+            {
+              "title": "Logout",
+              "description": "Cierra tu sesión actual"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "cliente-nuevo.onrender.com",
+    "nova.com.mx",
+    "api.openai.com",
+    "login.microsoftonline.com",
+    "token.botframework.com"
+  ],
+  "webApplicationInfo": {
+    "id": "dcd9ce45-96c3-43ad-986c-c7e063d0651e",
+    "resource": "api://dcd9ce45-96c3-43ad-986c-c7e063d0651e"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        },
+        {
+          "name": "TeamMember.Read.Group",
+          "type": "Application"
+        }
+      ]
+    }
+  },
+  "defaultInstallScope": "personal",
+  "defaultGroupCapability": {
+    "personal": "bot",
+    "team": "bot",
+    "groupchat": "bot"
+  },
+  "activities": {
+    "activityTypes": [
+      {
+        "type": "message",
+        "description": "Conversación con el asistente IA de Nova"
+      }
+    ]
+  },
+  "localizationInfo": {
+    "defaultLanguageTag": "es-mx",
+    "additionalLanguages": [
+      {
+        "languageTag": "en-us",
+        "file": "en-us.json"
+      }
+    ]
+  },
+  "showLoadingIndicator": true,
+  "isFullScreen": false,
+  "configurableTabs": [],
+  "staticTabs": [],
+  "composeExtensions": [],
+  "meetingExtensionDefinition": {
+    "scenes": [],
+    "supportsStreaming": false
+  }
+}
