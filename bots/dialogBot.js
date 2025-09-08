@@ -5,7 +5,7 @@ import TeamsActivityHandler from 'botbuilder';
 /**
  * DialogBot - Clase base simplificada
  */
-export default class DialogBot extends TeamsActivityHandler {
+class DialogBot extends TeamsActivityHandler {
     constructor(conversationState, userState) {
         super();
 
