@@ -2,7 +2,7 @@
 import DialogBot from './dialogBot.js';
 import { CardFactory } from 'botbuilder';
 import axios from 'axios';
-import openaiService from '../services/openaiService.s';
+import openaiService from '../services/openaiService.js';
 import cosmosService from '../services/cosmosService.js';
 import conversationService from '../services/conversationService.js';
 import 'dotenv/config';
