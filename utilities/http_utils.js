@@ -1,6 +1,6 @@
 // utilities/http_utils.js - Utilidades HTTP simplificadas
 
-const axios = require('axios');
+import axios from 'axios';
 
 /**
  * Valida si un token JWT es válido

@@ -1,9 +1,9 @@
 // services/documentService.js - VERSIÓN SIMPLIFICADA Y FUNCIONAL
-const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
-const OpenAI = require('openai');
-require('dotenv').config();
+import 'dotenv/config';
+import { SearchClient, AzureKeyCredential } from '@azure/search-documents';
+import OpenAI from 'openai';
 
-class DocumentService {
+export default class DocumentService {
     constructor() {
         if (DocumentService.instance) {
             return DocumentService.instance;

@@ -1,11 +1,11 @@
 // bots/teamsBot.js - CÓDIGO COMPLETO con nuevo formato de persistencia
-const { DialogBot } = require('./dialogBot');
-const { CardFactory } = require('botbuilder');
-const axios = require('axios');
-const openaiService = require('../services/openaiService');
-const cosmosService = require('../services/cosmosService');
-const conversationService = require('../services/conversationService');
-require('dotenv').config();
+import DialogBot from './dialogBot.js';
+import { CardFactory } from 'botbuilder';
+import axios from 'axios';
+import openaiService from '../services/openaiService.s';
+import cosmosService from '../services/cosmosService.js';
+import conversationService from '../services/conversationService.js';
+import 'dotenv/config';
 
 export default class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {

@@ -1,12 +1,12 @@
 // scripts/testConversationFormat.js - Test del formato de conversación
 
-require('dotenv').config();
-const cosmosService = require('../services/cosmosService');
+import 'dotenv/config';
+import cosmosService from '../services/cosmosService.js';
 
 /**
  * Script de prueba para verificar el formato de conversación
  */
-class TestConversationFormat {
+export default class TestConversationFormat {
     constructor() {
         this.testResults = {
             timestamp: new Date().toISOString(),

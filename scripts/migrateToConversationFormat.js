@@ -1,13 +1,13 @@
 // scripts/migrateToConversationFormat.js - Migración a formato de conversación
 
-require('dotenv').config();
-const cosmosService = require('../services/cosmosService');
-const { DateTime } = require('luxon');
+import 'dotenv/config';
+import cosmosService from '../services/cosmosService.js';
+import { DateTime } from 'luxon';
 
 /**
  * Script de migración para convertir conversaciones existentes al nuevo formato OpenAI
  */
-class ConversationMigration {
+export default class ConversationMigration {
     constructor() {
         this.migrationResults = {
             timestamp: new Date().toISOString(),

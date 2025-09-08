@@ -1,8 +1,7 @@
 // services/cosmosService.js - MEJORADO: Historial + Formato de Conversación
-const { CosmosClient } = require('@azure/cosmos');
-const { DateTime } = require('luxon');
-require('dotenv').config();
-
+import {CosmosClient} from '@azure/cosmos';
+import DateTime from 'luxon';
+import 'dotenv/config';
 /**
  * Servicio de Cosmos DB MEJORADO - Historial funcionando + Formato de conversación
  */

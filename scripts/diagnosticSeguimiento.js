@@ -1,13 +1,13 @@
 // scripts/diagnosticSeguimiento.js - Diagnóstico del sistema de seguimiento
 
-require('dotenv').config();
-const seguimientoService = require('../services/seguimientoService');
-const cosmosService = require('../services/cosmosService');
+import 'dotenv/config';
+import seguimientoService from '../services/seguimientoService.js';
+import cosmosService from '../services/cosmosService.js';
 
 /**
  * Script para diagnosticar el sistema de seguimiento
  */
-class DiagnosticoSeguimiento {
+export default class DiagnosticoSeguimiento {
     constructor() {
         this.testUserId = 'test_user_diagnostic';
     }

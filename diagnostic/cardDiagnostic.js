@@ -1,11 +1,11 @@
 // diagnostic/cardDiagnostic.js - Herramienta para diagnosticar problemas con tarjetas
 
-const { CardFactory } = require('botbuilder');
+import CardFactory from 'botbuilder';
 
 /**
  * Clase para diagnosticar problemas con tarjetas adaptativas
  */
-class CardDiagnostic {
+export default class CardDiagnostic {
     
     /**
      * Crea una tarjeta de prueba simple

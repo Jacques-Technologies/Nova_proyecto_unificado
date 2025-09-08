@@ -1,7 +1,6 @@
 // services/conversationService.js - Servicio simplificado de conversaciones
 
-const { DateTime } = require('luxon');
-
+import { DateTime } from 'luxon';
 /**
  * ConversationService - Manejo simplificado de conversaciones en memoria
  * Nota: Al usar MemoryStorage, las conversaciones se pierden al reiniciar el bot

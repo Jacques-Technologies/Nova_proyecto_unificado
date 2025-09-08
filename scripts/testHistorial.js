@@ -1,11 +1,10 @@
 // scripts/testHistorial.js - Script para probar el sistema de historial
-require('dotenv').config();
-
+import 'dotenv/config';
 /**
  * Script de prueba para verificar que el sistema de historial funcione correctamente
  * Ejecutar con: node scripts/testHistorial.js
  */
-class TestHistorial {
+export default class TestHistorial {
     constructor() {
         this.testResults = {
             timestamp: new Date().toISOString(),

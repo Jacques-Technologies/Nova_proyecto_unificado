@@ -1,13 +1,13 @@
 // mainDialog.js - Versión simplificada sin OAuth
 // Este archivo es opcional ya que el login ahora se maneja directamente en TeamsBot
 
-const { ComponentDialog } = require('botbuilder-dialogs');
+import ComponentDialog from 'botbuilder-dialogs';
 
 /**
  * MainDialog - Versión simplificada para futuros diálogos personalizados
  * Ya no se usa para autenticación OAuth
  */
-class MainDialog extends ComponentDialog {
+export default class MainDialog extends ComponentDialog {
     constructor() {
         super('MainDialog');
         

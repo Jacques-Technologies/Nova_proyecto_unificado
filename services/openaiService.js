@@ -1,10 +1,11 @@
 // services/openaiService.js - VERSIÓN SIMPLIFICADA Y FUNCIONAL
-const { OpenAI } = require('openai');
-const { DateTime } = require('luxon');
-const axios = require('axios');
-const cosmosService = require('./cosmosService');
-const documentService = require('./documentService');
-require('dotenv').config();
+import 'dotenv/config';
+import OpenAI from 'openai';
+import { DateTime } from 'luxon';
+import axios from 'axios';
+
+import cosmosService from './cosmosService.js';
+import documentService from './documentService.js';
 
 export default class AzureOpenAIService {
   constructor() {

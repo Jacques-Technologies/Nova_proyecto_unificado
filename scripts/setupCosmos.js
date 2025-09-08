@@ -1,13 +1,13 @@
 // scripts/setupCosmos.js - Script para configurar Cosmos DB automáticamente
 
-const { CosmosClient } = require('@azure/cosmos');
-require('dotenv').config();
+import 'dotenv/config';
+import { CosmosClient } from '@azure/cosmos';
 
 /**
  * Script para configurar automáticamente Cosmos DB
  * Crea la base de datos y contenedor si no existen
  */
-class CosmosSetup {
+export default class CosmosSetup {
     constructor() {
         this.endpoint = process.env.COSMOS_DB_ENDPOINT;
         this.key = process.env.COSMOS_DB_KEY;

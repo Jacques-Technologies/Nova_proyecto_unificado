@@ -1,13 +1,13 @@
 // logoutDialog.js - Versión simplificada sin OAuth
 // Este archivo es opcional ya que el logout ahora se maneja directamente en TeamsBot
 
-const { ComponentDialog } = require('botbuilder-dialogs');
+import ComponentDialog from 'botbuilder-dialogs';
 
 /**
  * LogoutDialog - Versión simplificada 
  * Ya no se usa para OAuth, el logout se maneja en TeamsBot
  */
-class LogoutDialog extends ComponentDialog {
+export default class LogoutDialog extends ComponentDialog {
     constructor(id) {
         super(id || 'LogoutDialog');
         

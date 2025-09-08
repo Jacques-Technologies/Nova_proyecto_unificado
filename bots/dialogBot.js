@@ -1,6 +1,6 @@
 // dialogBot.js - Versión simplificada sin OAuth/Azure
 
-const { TeamsActivityHandler } = require('botbuilder');
+import TeamsActivityHandler from 'botbuilder';
 
 /**
  * DialogBot - Clase base simplificada

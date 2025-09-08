@@ -1,16 +1,16 @@
 // scripts/diagnostic.js - Script de diagnóstico completo para Nova Bot
 
-const axios = require('axios');
-const { CosmosClient } = require('@azure/cosmos');
-const OpenAI = require('openai');
-const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
-require('dotenv').config();
+import axios from 'axios';
+import { CosmosClient } from '@azure/cosmos';
+import OpenAI from 'openai';
+import { SearchClient, AzureKeyCredential } from '@azure/search-documents';
+import 'dotenv/config';
 
 /**
  * Script de diagnóstico completo para verificar todas las configuraciones
  * Ejecutar con: node scripts/diagnostic.js
  */
-class NovaBotDiagnostic {
+export default class NovaBotDiagnostic {
     constructor() {
         this.results = {
             timestamp: new Date().toISOString(),
