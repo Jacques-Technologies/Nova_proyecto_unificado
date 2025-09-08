@@ -5,6 +5,11 @@ import 'dotenv/config';
 /**
  * Servicio de Cosmos DB MEJORADO - Historial funcionando + Formato de conversación
  */
+
+// Crear instancia singleton
+const cosmosService = new CosmosService();
+
+
 export default class CosmosService {
     constructor() {
         this.initialized = false;
@@ -971,7 +976,4 @@ async updateConversationActivity(conversationId, userId) {
         };
     }
 }
-
-// Crear instancia singleton
-const cosmosService = new CosmosService();
 

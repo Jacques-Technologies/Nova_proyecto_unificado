@@ -6,6 +6,8 @@ import axios from 'axios';
 
 import cosmosService from './cosmosService.js';
 import documentService from './documentService.js';
+// Crear instancia singleton
+const openaiService = new AzureOpenAIService();
 
 export default class AzureOpenAIService {
   constructor() {
@@ -598,5 +600,3 @@ INSTRUCCIONES:
   }
 }
 
-// Crear instancia singleton
-const openaiService = new AzureOpenAIService();

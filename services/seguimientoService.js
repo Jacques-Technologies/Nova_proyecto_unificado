@@ -6,6 +6,10 @@ import cosmosService from './cosmosService.js';
 /**
  * Servicio de Seguimiento CORREGIDO - Mantiene historial de 5 mensajes de referencia
  */
+// Crear instancia singleton
+const seguimientoService = new SeguimientoService();
+
+
 export default class SeguimientoService {
     constructor() {
         // Cache en memoria para acceso rápido
@@ -579,7 +583,4 @@ export default class SeguimientoService {
         };
     }
 }
-
-// Crear instancia singleton
-const seguimientoService = new SeguimientoService();
 
