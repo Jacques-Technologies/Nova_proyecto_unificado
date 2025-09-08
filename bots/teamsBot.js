@@ -1294,6 +1294,3 @@ export default class TeamsBot extends DialogBot {
         });
     }
 }
-
-module.exports = TeamsBot;       // CommonJS
-module.exports = { TeamsBot };   // CommonJS con objeto

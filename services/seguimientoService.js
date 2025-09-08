@@ -583,4 +583,3 @@ export default class SeguimientoService {
 // Crear instancia singleton
 const seguimientoService = new SeguimientoService();
 
-module.exports = seguimientoService;

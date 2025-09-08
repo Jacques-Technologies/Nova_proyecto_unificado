@@ -330,4 +330,3 @@ if (require.main === module) {
     });
 }
 
-module.exports = CosmosSetup;

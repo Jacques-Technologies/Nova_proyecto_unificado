@@ -32,4 +32,3 @@ export default class LogoutDialog extends ComponentDialog {
     }
 }
 
-module.exports.LogoutDialog = LogoutDialog;

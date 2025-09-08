@@ -267,4 +267,3 @@ export default class ConversationService {
 // Crear instancia singleton
 const conversationService = new ConversationService();
 
-module.exports = conversationService;

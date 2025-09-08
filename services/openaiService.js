@@ -600,4 +600,3 @@ INSTRUCCIONES:
 
 // Crear instancia singleton
 const openaiService = new AzureOpenAIService();
-module.exports = openaiService;
