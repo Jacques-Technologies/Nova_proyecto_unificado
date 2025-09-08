@@ -15,8 +15,8 @@ import CosmosService from './services/cosmosService.js';
 import AzureOpenAIService from './services/openaiService.js';
 
 const cosmosService = new CosmosService();
-const conversationServiceInstance = new ConversationService();
-const openaiServiceInstance = new AzureOpenAIService();
+const conversationService = new ConversationService(); // Fixed variable name
+const openaiService = new AzureOpenAIService(); // Fixed variable name
 /**
  * Arranca el servidor Express y registra todas las rutas.  Se emplea
  * una función asincrónica para poder utilizar `await import()` con

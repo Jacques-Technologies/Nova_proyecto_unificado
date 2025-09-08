@@ -8,8 +8,8 @@ import ConversationService from '../services/conversationService.js';
 import 'dotenv/config';
 
 const cosmosService= new CosmosService();
-const conversationService = new ConversationService();
-const OpenaiService = new AzureOpenAIService();
+const conversationService = new ConversationService(); 
+const openaiService = new AzureOpenAIService(); 
 
 export default class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
