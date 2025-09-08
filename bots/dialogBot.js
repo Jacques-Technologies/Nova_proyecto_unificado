@@ -5,7 +5,7 @@ const { TeamsActivityHandler } = require('botbuilder');
 /**
  * DialogBot - Clase base simplificada
  */
-class DialogBot extends TeamsActivityHandler {
+export default class DialogBot extends TeamsActivityHandler {
     constructor(conversationState, userState) {
         super();
 
