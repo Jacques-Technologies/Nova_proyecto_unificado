@@ -5,11 +5,11 @@ import { config } from "../../controllers/config/config.js";
  * Cliente de Azure OpenAI usando el SDK oficial de OpenAI con soporte Azure
  */
 export const openAIClient = new OpenAI({
-  apiKey: config.OPENAI_API_KEY,
-  baseURL: `${config.OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
+  apiKey: config.AZURE_OPENAI_API_KEY,
+  baseURL: `${config.AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
   defaultQuery: { 'api-version': '2024-12-01-preview' },
   defaultHeaders: {
-    'api-key': config.OPENAI_API_KEY,
+    'api-key': config.AZURE_OPENAI_API_KEY,
   },
 });
 
