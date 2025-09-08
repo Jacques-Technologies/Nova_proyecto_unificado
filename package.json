@@ -16,7 +16,7 @@
   "dependencies": {
     "@azure/cosmos": "^3.17.3",
     "@azure/search-documents": "^11.3.1",
-    "botbuilder-teams" : "^4.19.3",
+    "botbuilder-teams" : "latest",
     "axios": "^1.4.0",
     "botbuilder": "^4.19.3",
     "botbuilder-dialogs": "^4.19.3",
