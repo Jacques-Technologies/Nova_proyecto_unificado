@@ -206,4 +206,4 @@ class DialogBot extends TeamsActivityHandler {
     }
 }
 
-module.exports.DialogBot = DialogBot;
+module.exports=DialogBot;

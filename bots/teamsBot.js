@@ -1295,4 +1295,4 @@ class TeamsBot extends DialogBot {
     }
 }
 
-module.exports.TeamsBot = TeamsBot;
+module.exports= TeamsBot;
