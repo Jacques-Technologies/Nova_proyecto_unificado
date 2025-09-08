@@ -1,6 +1,7 @@
 {
   "name": "novabot",
   "version": "1.0.0",
+  "type": "module",
   "description": "Bot de Teams",
   "main": "index.js",
   "scripts": {
