@@ -1,7 +1,7 @@
 // dialogBot.js - Versión corregida con importaciones correctas
 
 // OPCIÓN 1: Si usas botbuilder-teams
-import { TeamsActivityHandler } from 'botbuilder-teams';
+import { TeamsActivityHandler } from 'botbuilder';
 
 // OPCIÓN 2: Si usas solo botbuilder
 // import { ActivityHandler } from 'botbuilder';
