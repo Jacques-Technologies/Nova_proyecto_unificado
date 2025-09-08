@@ -973,5 +973,5 @@ async updateConversationActivity(conversationId, userId) {
 }
 
 // Crear instancia singleton
-const CosmosService = new CosmosService();
+const cosmosService = new CosmosService();
 
