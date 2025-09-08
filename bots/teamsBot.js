@@ -7,7 +7,7 @@ import CosmosService from '../services/cosmosService.js';
 import ConversationService from '../services/conversationService.js';
 import 'dotenv/config';
 
-const CosmosService= new cosmosService();
+const cosmosService= new CosmosService();
 const conversationService = new ConversationService();
 const OpenaiService = new AzureOpenAIService();
 
