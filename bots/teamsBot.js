@@ -7,7 +7,7 @@ const cosmosService = require('../services/cosmosService');
 const conversationService = require('../services/conversationService');
 require('dotenv').config();
 
-class TeamsBot extends DialogBot {
+export default class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
         super(conversationState, userState);
 
