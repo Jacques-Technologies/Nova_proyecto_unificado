@@ -14,7 +14,7 @@ import conversationService from './services/conversationService.js';
 import CosmosService from './services/cosmosService.js';
 import openaiService from './services/openaiService.js';
 
-
+const cosmosService = new CosmosService();
 /**
  * Arranca el servidor Express y registra todas las rutas.  Se emplea
  * una función asincrónica para poder utilizar `await import()` con
