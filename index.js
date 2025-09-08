@@ -1,39 +1,19 @@
-/**
- * Punto de entrada unificado para el bot de Teams, la API de documentos
- * (PDF y Word) y el bot web.  Este fichero reemplaza a la versión
- * original basada en Restify y arranca un único servidor Express que
- * expone:
- *  - /api/messages  -> endpoint para Microsoft Bot Framework (Teams)
- *  - /api/sendPdf   -> procesamiento de PDFs (subida y generación de embeddings)
- *  - /api/sendWord  -> procesamiento de documentos Word
- *  - /api/webchat   -> punto de entrada para clientes web (chat HTTP)
- *  - /health        -> endpoint de salud
- *
- * Se utilizan buenas prácticas de programación: carga asincrónica de
- * módulos ESM con dynamic import, encapsulación de la lógica del bot y
- * de los servicios de Azure, manejo de errores centralizado y uso de
- * servicios compartidos para conversaciones y persistencia.  Todas las
- * variables de entorno se cargan mediante `dotenv` al inicio.  Véase
- * `.env.example` para una lista de variables necesarias.
- */
+import express from 'express';
+import cors from 'cors';
 
-const express = require('express');
-const cors = require('cors');
-
-// Bot Framework imports
-const {
+import {
   CloudAdapter,
   ConfigurationBotFrameworkAuthentication,
   MemoryStorage,
   ConversationState,
   UserState
-} = require('botbuilder');
+} from 'botbuilder';
 
-// Servicios del proyecto Nova
-const { TeamsBot } = require('./bots/teamsBot');
-const conversationService = require('./services/conversationService');
-const cosmosService = require('./services/cosmosService');
-const openaiService = require('./services/openaiService');
+import { TeamsBot } from './bots/teamsBot.js';
+import conversationService from './services/conversationService.js';
+import cosmosService from './services/cosmosService.js';
+import openaiService from './services/openaiService.js';
+
 
 /**
  * Arranca el servidor Express y registra todas las rutas.  Se emplea
