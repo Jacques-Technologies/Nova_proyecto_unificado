@@ -11,7 +11,7 @@ import {
 
 import TeamsBot  from './bots/teamsBot.js';
 import conversationService from './services/conversationService.js';
-import cosmosService from './services/cosmosService.js';
+import CosmosService from './services/cosmosService.js';
 import openaiService from './services/openaiService.js';
 
 
