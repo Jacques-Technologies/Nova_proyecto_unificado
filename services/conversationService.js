@@ -6,7 +6,7 @@ const { DateTime } = require('luxon');
  * ConversationService - Manejo simplificado de conversaciones en memoria
  * Nota: Al usar MemoryStorage, las conversaciones se pierden al reiniciar el bot
  */
-class ConversationService {
+export default class ConversationService {
     constructor() {
         // Almacenamiento en memoria
         this.conversations = new Map();

@@ -6,7 +6,7 @@ const cosmosService = require('./cosmosService');
 const documentService = require('./documentService');
 require('dotenv').config();
 
-class AzureOpenAIService {
+export default class AzureOpenAIService {
   constructor() {
     this.initialized = false;
     this.openaiAvailable = false;

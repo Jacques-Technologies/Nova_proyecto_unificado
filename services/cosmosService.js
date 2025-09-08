@@ -6,7 +6,7 @@ require('dotenv').config();
 /**
  * Servicio de Cosmos DB MEJORADO - Historial funcionando + Formato de conversación
  */
-class CosmosService {
+export default class CosmosService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
