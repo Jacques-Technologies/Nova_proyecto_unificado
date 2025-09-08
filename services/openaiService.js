@@ -7,7 +7,7 @@ import axios from 'axios';
 import cosmosService from './cosmosService.js';
 import documentService from './documentService.js';
 
-const cosmosService= new cosmosService();
+const CosmosService= new cosmosService();
 const documentService = new documentService();
 export default class AzureOpenAIService {
   constructor() {

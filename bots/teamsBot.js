@@ -7,9 +7,9 @@ import CosmosService from '../services/cosmosService.js';
 import conversationService from '../services/conversationService.js';
 import 'dotenv/config';
 
-const cosmosService = new CosmosService();
-const conversationServiceInstance = conversationService;
-const openaiServiceInstance = openaiService;
+const CosmosService= new cosmosService();
+const ConversationService = new conversationService();
+const OpenaiService = new openaiService();
 
 export default class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
