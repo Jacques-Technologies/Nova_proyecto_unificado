@@ -4,11 +4,11 @@ import { CardFactory } from 'botbuilder';
 import axios from 'axios';
 import AzureOpenAIService from '../services/openaiService.js';
 import CosmosService from '../services/cosmosService.js';
-import conversationService from '../services/conversationService.js';
+import ConversationService from '../services/conversationService.js';
 import 'dotenv/config';
 
 const CosmosService= new cosmosService();
-const ConversationService = new conversationService();
+const conversationService = new ConversationService();
 const OpenaiService = new AzureOpenAIService();
 
 export default class TeamsBot extends DialogBot {

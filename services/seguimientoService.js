@@ -1,9 +1,9 @@
 // services/seguimientoService.js - CORREGIDO: Persistencia de 5 mensajes funcionando
 
 import { DateTime } from 'luxon';
-import cosmosService from './cosmosService.js';
+import CosmosService from './cosmosService.js';
 
-const CosmosService= new cosmosService();
+const cosmosService= new CosmosService();
 /* * Servicio de Seguimiento CORREGIDO - Mantiene historial de 5 mensajes de referencia
  */
 export default class SeguimientoService {

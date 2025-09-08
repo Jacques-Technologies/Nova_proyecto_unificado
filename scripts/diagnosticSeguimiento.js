@@ -1,11 +1,11 @@
 // scripts/diagnosticSeguimiento.js - Diagnóstico del sistema de seguimiento
 
 import 'dotenv/config';
-import seguimientoService from '../services/seguimientoService.js';
-import cosmosService from '../services/cosmosService.js';
+import SeguimientoService from '../services/seguimientoService.js';
+import CosmosService from '../services/cosmosService.js';
 
-const SeguimientoService = new seguimientoService();
-const CosmosService= new cosmosService();
+const seguimientoService = new SeguimientoService();
+const cosmosService= new CosmosService();
 /**
  * Script para diagnosticar el sistema de seguimiento
  */

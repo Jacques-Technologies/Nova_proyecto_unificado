@@ -4,11 +4,11 @@ import OpenAI from 'openai';
 import { DateTime } from 'luxon';
 import axios from 'axios';
 
-import cosmosService from './cosmosService.js';
-import documentService from './documentService.js';
+import CosmosService from './cosmosService.js';
+import DocumentService from './documentService.js';
 
-const CosmosService= new cosmosService();
-const documentService = new documentService();
+const cosmosService= new CosmosService();
+const documentService = new DocumentService();
 export default class AzureOpenAIService {
   constructor() {
     this.initialized = false;

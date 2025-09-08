@@ -1,9 +1,9 @@
 // scripts/testConversationFormat.js - Test del formato de conversación
 
 import 'dotenv/config';
-import cosmosService from '../services/cosmosService.js';
+import CosmosService from '../services/cosmosService.js';
 
-const CosmosService= new cosmosService();
+const cosmosService= new CosmosService();
 
 /**
  * Script de prueba para verificar el formato de conversación

@@ -10,13 +10,13 @@ import {
 } from 'botbuilder';
 
 import TeamsBot  from './bots/teamsBot.js';
-import conversationService from './services/conversationService.js';
+import ConversationService from './services/conversationService.js';
 import CosmosService from './services/cosmosService.js';
-import openaiService from './services/openaiService.js';
+import AzureOpenAIService from './services/openaiService.js';
 
 const cosmosService = new CosmosService();
-const conversationServiceInstance = new conversationService();
-const openaiServiceInstance = new openaiService();
+const conversationServiceInstance = new ConversationService();
+const openaiServiceInstance = new AzureOpenAIService();
 /**
  * Arranca el servidor Express y registra todas las rutas.  Se emplea
  * una función asincrónica para poder utilizar `await import()` con
