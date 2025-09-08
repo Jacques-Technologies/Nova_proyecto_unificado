@@ -3,7 +3,7 @@
 import { DateTime } from 'luxon';
 import cosmosService from './cosmosService.js';
 
-const cosmosService = new CosmosService();
+const cosmosService = new cosmosService();
 /**
  * Servicio de Seguimiento CORREGIDO - Mantiene historial de 5 mensajes de referencia
  */
