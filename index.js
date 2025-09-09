@@ -31,12 +31,17 @@ async function startServer() {
   // originales del backend.
   const { pdfRoutes } = await import('./backend/routes/pdf.routes.js');
   const { wordRoutes } = await import('./backend/routes/wordRoutes.routes.js');
+  // Importar dinámicamente las rutas de chat web.  Este módulo exporta un router con los endpoints /init, /ask, /history y /stream.
+  const { default: webchatRoute } = await import('./routes/webchatRoute.js');
 
   // Crear servidor Express y aplicar middlewares
   const app = express();
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+
+  // Montar rutas de chat web antes de las rutas /api.  Estas rutas están fuera del prefijo /api para que el front-end pueda consumirlas directamente.
+  app.use('/webchat', webchatRoute);
 
   // Registrar rutas de subida y procesamiento de documentos bajo /api
   app.use('/api', pdfRoutes);
