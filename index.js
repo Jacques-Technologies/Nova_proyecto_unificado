@@ -41,7 +41,7 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true }));
 
   // Montar rutas de chat web antes de las rutas /api.  Estas rutas están fuera del prefijo /api para que el front-end pueda consumirlas directamente.
-  app.use('/webchat', webchatRoute);
+  app.use('/api/webchat', webchatRoute);
 
   // Registrar rutas de subida y procesamiento de documentos bajo /api
   app.use('/api', pdfRoutes);
