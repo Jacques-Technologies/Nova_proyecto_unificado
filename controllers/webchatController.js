@@ -223,6 +223,7 @@ export async function ask(req, res) {
    GET /api/webchat/history?token=...&limit=30&before=...
 ============================================================ */
 // Reemplaza el método history en webchatController.js
+// Versión sin ORDER BY problemático
 
 export async function history(req, res) {
   try {
@@ -247,9 +248,9 @@ export async function history(req, res) {
         console.log(`📖 getMessagesByToken encontró: ${items?.length || 0} items`);
       }
 
-      // 🎯 MÉTODO 2: Query directo corregido - BUSCAR POR DOCUMENTTYPE
+      // 🎯 MÉTODO 2: Query directo SIN ORDER BY
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Intentando query directo con documentType...');
+        console.log('🔍 Intentando query directo sin ORDER BY...');
         try {
           let queryText = `
             SELECT TOP @limit c.message, c.messageType, c.timestamp, c.conversationId, c.documentType
@@ -270,119 +271,103 @@ export async function history(req, res) {
             params.push({ name: '@before', value: before });
           }
 
-          queryText += ` ORDER BY c.timestamp DESC`;
+          // SIN ORDER BY para evitar el error del índice compuesto
 
           const { resources } = await cosmos.container.items
             .query({ query: queryText, parameters: params }, { partitionKey: token })
             .fetchAll();
 
-          items = (resources || [])
-            .reverse() // Para que queden en orden cronológico
-            .map(item => ({
-              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-              content: item.message,
-              ts: item.timestamp
-            }));
+          // Ordenar manualmente en JavaScript
+          const sortedResources = (resources || [])
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+          items = sortedResources.map(item => ({
+            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+            content: item.message,
+            ts: item.timestamp
+          }));
           
-          method = 'directQueryFixed';
-          console.log(`📖 Query directo con documentType encontró: ${items?.length || 0} items`);
+          method = 'directQueryNoOrderBy';
+          console.log(`📖 Query directo sin ORDER BY encontró: ${items?.length || 0} items`);
         } catch (directQueryError) {
           console.error('❌ Error en query directo:', directQueryError);
           error = directQueryError.message;
         }
       }
 
-      // 🎯 MÉTODO 3: Buscar usando conversationId más reciente
+      // 🎯 MÉTODO 3: Query más simple - solo por token y messageType
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Intentando obtener por conversationId más reciente...');
+        console.log('🔍 Intentando query simple por messageType...');
         try {
-          // Obtener la conversación más reciente
-          const latestConvQuery = `
-            SELECT TOP 1 c.conversationId
+          const simpleQuery = `
+            SELECT TOP @limit c.message, c.messageType, c.timestamp
             FROM c
             WHERE c.userToken = @token
-              AND (c.documentType = 'conversation_info' OR c.documentType = 'conversation_message')
-            ORDER BY c.timestamp DESC, c.lastActivity DESC
+              AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+              AND IS_DEFINED(c.message)
+              AND c.message != ''
           `;
 
-          const { resources: convResources } = await cosmos.container.items
+          const { resources } = await cosmos.container.items
             .query({ 
-              query: latestConvQuery, 
+              query: simpleQuery, 
+              parameters: [
+                { name: '@token', value: token },
+                { name: '@limit', value: Number(limit) }
+              ] 
+            }, { partitionKey: token })
+            .fetchAll();
+
+          // Ordenar manualmente y filtrar
+          const sortedResources = (resources || [])
+            .filter(item => item.message && item.message.trim() !== '')
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+          items = sortedResources.map(item => ({
+            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+            content: item.message,
+            ts: item.timestamp
+          }));
+
+          method = 'simpleByMessageType';
+          console.log(`📖 Query simple encontró: ${items?.length || 0} items`);
+        } catch (simpleError) {
+          console.error('❌ Error en query simple:', simpleError);
+          error = simpleError.message;
+        }
+      }
+
+      // 🎯 MÉTODO 4: Query básico de diagnóstico
+      if ((!items || items.length === 0) && cosmosAvailable()) {
+        console.log('🔍 Query básico de diagnóstico...');
+        try {
+          const diagnosticQuery = `
+            SELECT TOP 20 c.message, c.messageType, c.timestamp, c.documentType, c.conversationId
+            FROM c
+            WHERE c.userToken = @token
+          `;
+
+          const { resources } = await cosmos.container.items
+            .query({ 
+              query: diagnosticQuery, 
               parameters: [{ name: '@token', value: token }] 
             }, { partitionKey: token })
             .fetchAll();
 
-          if (convResources && convResources.length > 0) {
-            const latestConvId = convResources[0].conversationId;
-            console.log(`🎯 ConversationId más reciente: ${latestConvId}`);
-
-            // Ahora buscar mensajes de esa conversación
-            const messagesQuery = `
-              SELECT TOP @limit c.message, c.messageType, c.timestamp
-              FROM c
-              WHERE c.userToken = @token
-                AND c.conversationId = @conversationId
-                AND c.documentType = 'conversation_message'
-                AND IS_DEFINED(c.message)
-                AND c.message != ''
-              ORDER BY c.timestamp ASC
-            `;
-
-            const { resources: msgResources } = await cosmos.container.items
-              .query({ 
-                query: messagesQuery, 
-                parameters: [
-                  { name: '@token', value: token },
-                  { name: '@conversationId', value: latestConvId },
-                  { name: '@limit', value: Number(limit) }
-                ] 
-              }, { partitionKey: token })
-              .fetchAll();
-
-            items = (msgResources || []).map(item => ({
-              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-              content: item.message,
-              ts: item.timestamp
-            }));
-
-            method = 'byLatestConversationId';
-            console.log(`📖 Por conversationId encontró: ${items?.length || 0} items`);
-          }
-        } catch (convError) {
-          console.error('❌ Error en búsqueda por conversationId:', convError);
-          error = convError.message;
-        }
-      }
-
-      // 🎯 MÉTODO 4: Query de diagnóstico amplio
-      if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Query amplio de diagnóstico...');
-        try {
-          const diagnosticQuery = {
-            query: `
-              SELECT TOP 20 c.id, c.documentType, c.messageType, c.message, c.timestamp, c.userToken, c.conversationId
-              FROM c
-              WHERE c.userToken = @token
-              ORDER BY c.timestamp DESC
-            `,
-            parameters: [{ name: '@token', value: token }]
-          };
-
-          const { resources } = await cosmos.container.items
-            .query(diagnosticQuery, { partitionKey: token })
-            .fetchAll();
-
-          console.log(`🔍 Diagnóstico amplio: encontrados ${resources?.length || 0} documentos totales`);
+          console.log(`🔍 Diagnóstico: encontrados ${resources?.length || 0} documentos totales`);
           
           if (resources && resources.length > 0) {
-            console.log('📊 Estructura de documentos encontrados:');
+            console.log('📊 Documentos encontrados:');
             resources.forEach((doc, idx) => {
-              console.log(`   ${idx + 1}. Type: ${doc.documentType}, MessageType: ${doc.messageType}, HasMessage: ${!!doc.message}, ConvId: ${doc.conversationId?.substring(0, 10)}...`);
+              if (idx < 5) { // Solo mostrar los primeros 5
+                console.log(`   ${idx + 1}. Type: ${doc.documentType}, MessageType: ${doc.messageType}, Message: ${doc.message?.substring(0, 40)}...`);
+              }
             });
 
-            // Intentar extraer cualquier mensaje válido
+            // Extraer mensajes válidos
             const validMessages = resources
-              .filter(doc => doc.message && doc.message.trim() !== '')
+              .filter(doc => doc.message && doc.message.trim() !== '' && doc.messageType)
+              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
               .map(doc => ({
                 role: doc.messageType === 'bot' ? 'assistant' : (doc.messageType === 'system' ? 'system' : 'user'),
                 content: doc.message,
@@ -398,11 +383,11 @@ export async function history(req, res) {
           }
 
         } catch (diagError) {
-          console.error('❌ Error en diagnóstico amplio:', diagError);
+          console.error('❌ Error en diagnóstico:', diagError);
         }
       }
 
-      // 🎯 MÉTODO 5: Fallback en memoria (si Cosmos no está disponible)
+      // 🎯 MÉTODO 5: Fallback en memoria
       if ((!items || items.length === 0) && !cosmosAvailable()) {
         console.log('🔍 Usando fallback en memoria...');
         items = [];
@@ -415,22 +400,24 @@ export async function history(req, res) {
       items = [];
     }
 
-    // Normalizar respuesta
-    const normalizedItems = (items || []).map((item, index) => ({
-      id: `${token}_${Date.now()}_${index}`,
-      message: item.content || item.message,
-      type: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
-      messageType: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
-      timestamp: item.ts || item.timestamp,
-      userToken: token,
-      userName: 'Usuario'
-    }));
+    // Normalizar respuesta y ordenar por timestamp
+    const normalizedItems = (items || [])
+      .sort((a, b) => new Date(a.ts || a.timestamp) - new Date(b.ts || b.timestamp))
+      .map((item, index) => ({
+        id: `${token}_${Date.now()}_${index}`,
+        message: item.content || item.message,
+        type: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
+        messageType: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
+        timestamp: item.ts || item.timestamp,
+        userToken: token,
+        userName: 'Usuario'
+      }));
 
     console.log(`✅ HISTORY FINAL: ${normalizedItems.length} items, método: ${method}`);
 
-    // Log de los primeros mensajes encontrados para debug
+    // Log de los mensajes encontrados para debug
     if (normalizedItems.length > 0) {
-      console.log(`📝 Primeros mensajes encontrados:`);
+      console.log(`📝 Mensajes encontrados:`);
       normalizedItems.slice(0, 3).forEach((msg, idx) => {
         console.log(`   ${idx + 1}. ${msg.type}: ${msg.message.substring(0, 50)}...`);
       });
@@ -446,7 +433,7 @@ export async function history(req, res) {
         itemsFound: normalizedItems.length,
         error: error,
         timestamp: new Date().toISOString(),
-        queryAttempts: method.includes('diagnostic') ? 'multiple' : 'standard'
+        queryApproach: 'no-orderby-manual-sort'
       }
     });
     
