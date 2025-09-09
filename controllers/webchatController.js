@@ -533,3 +533,50 @@ export async function renameConversation(req, res) {
     return res.status(500).json({ success: false, message: 'Error renombrando conversación' });
   }
 }
+
+// controllers/webchatController.js (añade al final del archivo)
+export async function summary(req, res) {
+  try {
+    const token = req.query.token || req.body?.token;
+    const limit = Math.min(Number(req.query.limit || 30), 100);
+    if (!token) return res.status(400).json({ success: false, message: 'token requerido' });
+
+    // Obtener últimos mensajes por token
+    const items = cosmos.isAvailable() && typeof cosmos.getMessagesByToken === 'function'
+      ? (await cosmos.getMessagesByToken(token, { limit }))
+      : [];
+
+    // Texto base para resumir
+    const plain = (items || [])
+      .map(m => `${m.role === 'assistant' ? 'Asistente' : (m.role === 'system' ? 'Sistema' : 'Usuario')}: ${m.content}`)
+      .join('\n');
+
+    // Intentar con IA
+    let resumen = '';
+    if (aiAvailable() && plain) {
+      try {
+        const resp = await ai.procesarMensaje(
+          `Resume brevemente esta conversación en 3-5 viñetas y da 1 próxima acción si aplica:\n\n${plain}`,
+          [], token, { nombre: 'Resumen' }, await cosmos.getLatestConversationId(token)
+        );
+        resumen = typeof resp === 'string' ? resp
+          : resp?.content || resp?.text || '';
+      } catch (e) {
+        resumen = '';
+      }
+    }
+
+    // Fallback local si no hay IA
+    if (!resumen) {
+      // toma las 3-4 oraciones más largas del usuario y del asistente
+      const lines = plain.split('\n').filter(Boolean);
+      const top = lines.sort((a, b) => b.length - a.length).slice(0, 4);
+      resumen = `Resumen (local):\n- ${top.join('\n- ')}`;
+    }
+
+    return res.json({ success: true, summary: resumen, count: items.length });
+  } catch (e) {
+    console.error('summary error:', e);
+    return res.status(500).json({ success: false, message: 'Error generando resumen' });
+  }
+}
