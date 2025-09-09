@@ -598,5 +598,74 @@ INSTRUCCIONES:
   cleanup() { 
     console.log('OpenAI Service limpiado'); 
   }
+
+  /*
+   * Métodos de compatibilidad para el webchat
+   *
+   * Algunos controladores del proyecto (por ejemplo, webchatController.js)
+   * esperan que el servicio exponga createEmbedding() y
+   * completionWithContext(). La versión original de AzureOpenAIService
+   * implementa procesarMensaje() como punto de entrada principal, pero
+   * carece de estos métodos. Para evitar respuestas vacías en la
+   * interfaz web, se añaden aquí implementaciones mínimas que
+   * encapsulan la funcionalidad de embeddings y chat completions de
+   * OpenAI. Estas funciones devuelven un objeto compatible con lo
+   * esperado por el controlador: createEmbedding() devuelve el
+   * vector embedding (o null si no está disponible) y
+   * completionWithContext() devuelve un objeto { text: '...'} con
+   * el contenido generado por el modelo.
+   */
+  async createEmbedding({ input, dimensions = 1024 }) {
+    try {
+      if (!this.openaiAvailable) return null;
+      // Llamar a la API de embeddings. Si la API no soporta el
+      // parámetro dimensions, se omite.
+      const params = {
+        model: 'text-embedding-3-large',
+        input
+      };
+      if (dimensions) params.dimensions = dimensions;
+      const resp = await this.openai.embeddings.create(params);
+      return resp?.data?.[0]?.embedding || null;
+    } catch (error) {
+      console.error('Error en createEmbedding:', error.message);
+      return null;
+    }
+  }
+
+  async completionWithContext({ messages = [], documents = [], temperature = 1.0, contextVars = {} }) {
+    try {
+      if (!this.openaiAvailable) return { text: '' };
+
+      // Construir un mensaje de sistema en español que incluya variables
+      // de contexto y documentos opcionales. Los documentos se
+      // concatenan para proporcionar contexto adicional al modelo.
+      const docsText = Array.isArray(documents) && documents.length
+        ? 'Contexto de documentos:\n' + documents
+            .map((d, i) => `(${i + 1}) ${(d.text || d.content || '').substring(0, 1000)}`)
+            .join('\n\n')
+        : '';
+
+      const systemPrompt = `Responde SIEMPRE en español. Variables de tools: ${JSON.stringify(contextVars)}.` +
+        (docsText ? `\n\n${docsText}` : '');
+      const systemMessage = { role: 'system', content: systemPrompt };
+
+      // Filtrar mensajes proporcionados para asegurar que tienen role y content
+      const userMessages = (Array.isArray(messages) ? messages : []).filter(m => m && m.role && m.content);
+      const finalMessages = [systemMessage, ...userMessages];
+
+      const resp = await this.openai.chat.completions.create({
+        model: this.deploymentName,
+        messages: finalMessages,
+        temperature,
+        max_tokens: 800
+      });
+      const text = resp?.choices?.[0]?.message?.content?.trim() || '';
+      return { text };
+    } catch (error) {
+      console.error('Error en completionWithContext:', error.message);
+      return { text: '' };
+    }
+  }
 }
 
