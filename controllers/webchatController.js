@@ -225,26 +225,12 @@ export async function ask(req, res) {
 ============================================================ */
 export async function history(req, res) {
   try {
-    const { token, limit = 30, before } = req.query;
-    
+    const { token, limit = 30 } = req.query;
     if (!token) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'token requerido' 
-      });
+      return res.status(400).json({ success: false, message: 'token requerido' });
     }
-
-    let items = [];
-    try {
-      items = await cosmos.getMessagesByToken(token, {
-        limit: Number(limit),
-        before: before || null
-      }) || [];
-    } catch (error) {
-      console.warn('Error obteniendo historial por token:', error.message);
-      items = [];
-    }
-
+    const convId = await cosmos.getLatestConversationId(token);
+    const items = await cosmos.getConversationHistory(convId, token, Number(limit));
     return res.json({ success: true, items });
   } catch (err) {
     console.error('history error:', err);
