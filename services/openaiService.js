@@ -1,4 +1,4 @@
-// services/openaiService.js - VERSIÓN COMPLETA CON text-embedding-3-large
+// services/openaiService.js - VERSIÓN CORREGIDA CON CONFIGURACIÓN SEPARADA PARA EMBEDDINGS
 import 'dotenv/config';
 import OpenAI from 'openai';
 import { DateTime } from 'luxon';
@@ -14,8 +14,9 @@ export default class AzureOpenAIService {
   constructor() {
     this.initialized = false;
     this.openaiAvailable = false;
+    this.embeddingAvailable = false;
     this.tools = this.defineTools();
-    this.embeddingModel = 'text-embedding-3-large'; // Configuración para embeddings
+    this.embeddingModel = 'text-embedding-3-large';
     
     console.log('Inicializando Azure OpenAI Service...');
     this.initializeAzureOpenAI();
@@ -26,15 +27,17 @@ export default class AzureOpenAIService {
       const apiKey = process.env.OPENAI_API_KEY;
       const endpoint = process.env.OPENAI_ENDPOINT;
       const deploymentName = 'gpt-5-mini';
-      const apiVersion =  '2024-12-01-preview';
+      const apiVersion = '2024-12-01-preview';
 
-      // Configuración del modelo de embedding desde variable de entorno o default
+      // Configuración para embedding deployment
+      const embeddingDeployment = process.env.EMBEDDING_DEPLOYMENT || 'text-embedding-3-large';
       this.embeddingModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-large';
 
       if (!apiKey || !endpoint) {
         throw new Error('OPENAI_API_KEY y OPENAI_ENDPOINT requeridos');
       }
 
+      // Cliente para completions (chat)
       this.openai = new OpenAI({
         apiKey,
         baseURL: `${endpoint}/openai/deployments/${deploymentName}`,
@@ -46,15 +49,31 @@ export default class AzureOpenAIService {
         timeout: 45000
       });
 
+      // Cliente separado para embeddings
+      this.embeddingClient = new OpenAI({
+        apiKey,
+        baseURL: `${endpoint}/openai/deployments/${embeddingDeployment}`,
+        defaultQuery: { 'api-version': apiVersion },
+        defaultHeaders: {
+          'Content-Type': 'application/json',
+          'api-key': apiKey
+        },
+        timeout: 30000
+      });
+
       this.deploymentName = deploymentName;
+      this.embeddingDeployment = embeddingDeployment;
       this.openaiAvailable = true;
+      this.embeddingAvailable = true;
       this.initialized = true;
 
       console.log('Azure OpenAI configurado correctamente');
-      console.log(`Modelo de embedding configurado: ${this.embeddingModel}`);
+      console.log(`Modelo de chat: ${deploymentName}`);
+      console.log(`Modelo de embedding: ${embeddingDeployment}`);
     } catch (error) {
       console.error('Error inicializando Azure OpenAI:', error.message);
       this.openaiAvailable = false;
+      this.embeddingAvailable = false;
       this.initialized = false;
     }
   }
@@ -587,9 +606,11 @@ INSTRUCCIONES:
   getServiceStats() {
     return {
       available: this.openaiAvailable,
+      embeddingAvailable: this.embeddingAvailable,
       initialized: this.initialized,
       deployment: this.deploymentName,
-      embeddingModel: this.embeddingModel, // Información del modelo de embedding
+      embeddingDeployment: this.embeddingDeployment,
+      embeddingModel: this.embeddingModel,
       toolsCount: this.tools?.length || 0,
       integrations: {
         documentService: documentService?.isAvailable?.() || false,
@@ -608,25 +629,32 @@ INSTRUCCIONES:
 
   /*
    * MÉTODOS DE COMPATIBILIDAD PARA WEBCHAT
-   * Actualizados para usar text-embedding-3-large y max_completion_tokens
+   * CORREGIDOS: Usa cliente separado para embeddings
    */
 
   async createEmbedding({ input, dimensions = 1024 }) {
     try {
-      if (!this.openaiAvailable) return null;
+      if (!this.embeddingAvailable || !this.embeddingClient) {
+        console.error('Servicio de embeddings no disponible');
+        return null;
+      }
       
-      console.log(`Creando embedding con modelo: ${this.embeddingModel}, dimensiones: ${dimensions}`);
+      console.log(`Creando embedding con deployment: ${this.embeddingDeployment}, dimensiones: ${dimensions}`);
       
       const params = {
-        model: this.embeddingModel, // text-embedding-3-large
+        model: this.embeddingModel, // Usará el deployment correcto
         input,
-        dimensions: dimensions // Soportado por text-embedding-3-large
+        dimensions: dimensions
       };
       
-      const resp = await this.openai.embeddings.create(params);
+      // Usar el cliente específico para embeddings
+      const resp = await this.embeddingClient.embeddings.create(params);
       return resp?.data?.[0]?.embedding || null;
     } catch (error) {
       console.error('Error en createEmbedding:', error.message);
+      // Log adicional para debugging
+      console.error('Embedding deployment:', this.embeddingDeployment);
+      console.error('Embedding model:', this.embeddingModel);
       return null;
     }
   }
@@ -654,7 +682,7 @@ INSTRUCCIONES:
         model: this.deploymentName,
         messages: finalMessages,
         temperature,
-        max_completion_tokens: 800 // Parámetro correcto para gpt-5-mini
+        max_completion_tokens: 800
       });
       
       const text = resp?.choices?.[0]?.message?.content?.trim() || '';
