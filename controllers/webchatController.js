@@ -362,6 +362,8 @@ export async function ask(req, res) {
 // Reemplaza el método history en webchatController.js
 // Versión sin ORDER BY problemático
 
+// Reemplaza el método history con esta versión que prueba diferentes enfoques de partitionKey
+
 export async function history(req, res) {
   try {
     const { token, limit = 30, before } = req.query;
@@ -377,23 +379,14 @@ export async function history(req, res) {
     let error = null;
 
     try {
-      // 🎯 MÉTODO 1: getMessagesByToken (principal)
-      if (isFn(cosmos, 'getMessagesByToken')) {
-        console.log('🔍 Intentando getMessagesByToken...');
-        items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before });
-        method = 'getMessagesByToken';
-        console.log(`📖 getMessagesByToken encontró: ${items?.length || 0} items`);
-      }
-
-      // 🎯 MÉTODO 2: Query directo SIN ORDER BY
+      // 🎯 MÉTODO 1: Query SIN partitionKey especificado (deja que Cosmos DB lo maneje)
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Intentando query directo sin ORDER BY...');
+        console.log('🔍 Probando query SIN partitionKey específico...');
         try {
-          let queryText = `
-            SELECT TOP @limit c.message, c.messageType, c.timestamp, c.conversationId, c.documentType
+          const queryWithoutPK = `
+            SELECT TOP @limit c.message, c.messageType, c.timestamp, c.conversationId, c.userToken, c.documentType
             FROM c
             WHERE c.userToken = @token
-              AND c.documentType = 'conversation_message'
               AND IS_DEFINED(c.message)
               AND c.message != ''
           `;
@@ -402,133 +395,179 @@ export async function history(req, res) {
             { name: '@token', value: token },
             { name: '@limit', value: Number(limit) }
           ];
-          
-          if (before) {
-            queryText += ` AND c.timestamp < @before`;
-            params.push({ name: '@before', value: before });
-          }
 
-          // SIN ORDER BY para evitar el error del índice compuesto
-
+          // Query SIN especificar partitionKey
           const { resources } = await cosmos.container.items
-            .query({ query: queryText, parameters: params }, { partitionKey: token })
+            .query({ query: queryWithoutPK, parameters: params })
             .fetchAll();
 
-          // Ordenar manualmente en JavaScript
-          const sortedResources = (resources || [])
-            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          console.log(`📖 Query sin partitionKey encontró: ${resources?.length || 0} items`);
 
-          items = sortedResources.map(item => ({
-            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-            content: item.message,
-            ts: item.timestamp
-          }));
-          
-          method = 'directQueryNoOrderBy';
-          console.log(`📖 Query directo sin ORDER BY encontró: ${items?.length || 0} items`);
-        } catch (directQueryError) {
-          console.error('❌ Error en query directo:', directQueryError);
-          error = directQueryError.message;
+          if (resources && resources.length > 0) {
+            // Mostrar estructura de los primeros documentos
+            console.log('📊 Documentos encontrados:');
+            resources.slice(0, 3).forEach((doc, idx) => {
+              console.log(`   ${idx + 1}. DocumentType: ${doc.documentType}, MessageType: ${doc.messageType}, UserToken: ${doc.userToken?.substring(0, 8)}...`);
+              console.log(`      Message: "${doc.message?.substring(0, 50)}..."`);
+              console.log(`      ConversationId: ${doc.conversationId}`);
+            });
+
+            const sortedResources = resources
+              .filter(item => item.message && item.message.trim() !== '')
+              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            items = sortedResources.map(item => ({
+              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+              content: item.message,
+              ts: item.timestamp
+            }));
+            
+            method = 'queryWithoutPartitionKey';
+          }
+        } catch (noPKError) {
+          console.error('❌ Error en query sin partitionKey:', noPKError.message);
+          error = noPKError.message;
         }
       }
 
-      // 🎯 MÉTODO 3: Query más simple - solo por token y messageType
+      // 🎯 MÉTODO 2: Query con partitionKey como string directo
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Intentando query simple por messageType...');
+        console.log('🔍 Probando query con partitionKey string...');
         try {
-          const simpleQuery = `
-            SELECT TOP @limit c.message, c.messageType, c.timestamp
+          const queryWithStringPK = `
+            SELECT TOP @limit c.message, c.messageType, c.timestamp, c.conversationId, c.userToken
             FROM c
             WHERE c.userToken = @token
-              AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
               AND IS_DEFINED(c.message)
               AND c.message != ''
           `;
 
           const { resources } = await cosmos.container.items
             .query({ 
-              query: simpleQuery, 
+              query: queryWithStringPK, 
               parameters: [
                 { name: '@token', value: token },
                 { name: '@limit', value: Number(limit) }
               ] 
-            }, { partitionKey: token })
+            }, { partitionKey: token }) // Token como string directo
             .fetchAll();
 
-          // Ordenar manualmente y filtrar
-          const sortedResources = (resources || [])
-            .filter(item => item.message && item.message.trim() !== '')
-            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          console.log(`📖 Query con partitionKey string encontró: ${resources?.length || 0} items`);
 
-          items = sortedResources.map(item => ({
-            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-            content: item.message,
-            ts: item.timestamp
-          }));
+          if (resources && resources.length > 0) {
+            const sortedResources = resources
+              .filter(item => item.message && item.message.trim() !== '')
+              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-          method = 'simpleByMessageType';
-          console.log(`📖 Query simple encontró: ${items?.length || 0} items`);
-        } catch (simpleError) {
-          console.error('❌ Error en query simple:', simpleError);
-          error = simpleError.message;
+            items = sortedResources.map(item => ({
+              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+              content: item.message,
+              ts: item.timestamp
+            }));
+            
+            method = 'queryWithStringPartitionKey';
+          }
+        } catch (stringPKError) {
+          console.error('❌ Error en query con partitionKey string:', stringPKError.message);
         }
       }
 
-      // 🎯 MÉTODO 4: Query básico de diagnóstico
+      // 🎯 MÉTODO 3: Query con partitionKey como array
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Query básico de diagnóstico...');
+        console.log('🔍 Probando query con partitionKey array...');
         try {
-          const diagnosticQuery = `
-            SELECT TOP 20 c.message, c.messageType, c.timestamp, c.documentType, c.conversationId
+          const queryWithArrayPK = `
+            SELECT TOP @limit c.message, c.messageType, c.timestamp
             FROM c
             WHERE c.userToken = @token
+              AND IS_DEFINED(c.message)
           `;
 
           const { resources } = await cosmos.container.items
             .query({ 
-              query: diagnosticQuery, 
-              parameters: [{ name: '@token', value: token }] 
-            }, { partitionKey: token })
+              query: queryWithArrayPK, 
+              parameters: [
+                { name: '@token', value: token },
+                { name: '@limit', value: Number(limit) }
+              ] 
+            }, { partitionKey: [token] }) // Token como array
             .fetchAll();
 
-          console.log(`🔍 Diagnóstico: encontrados ${resources?.length || 0} documentos totales`);
-          
+          console.log(`📖 Query con partitionKey array encontró: ${resources?.length || 0} items`);
+
           if (resources && resources.length > 0) {
-            console.log('📊 Documentos encontrados:');
-            resources.forEach((doc, idx) => {
-              if (idx < 5) { // Solo mostrar los primeros 5
-                console.log(`   ${idx + 1}. Type: ${doc.documentType}, MessageType: ${doc.messageType}, Message: ${doc.message?.substring(0, 40)}...`);
-              }
-            });
+            const sortedResources = resources
+              .filter(item => item.message && item.message.trim() !== '')
+              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-            // Extraer mensajes válidos
-            const validMessages = resources
-              .filter(doc => doc.message && doc.message.trim() !== '' && doc.messageType)
-              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-              .map(doc => ({
-                role: doc.messageType === 'bot' ? 'assistant' : (doc.messageType === 'system' ? 'system' : 'user'),
-                content: doc.message,
-                ts: doc.timestamp
-              }))
-              .slice(-Number(limit));
-
-            if (validMessages.length > 0) {
-              items = validMessages;
-              method = 'diagnosticExtraction';
-              console.log(`📖 Extracción diagnóstica encontró: ${items.length} mensajes`);
-            }
+            items = sortedResources.map(item => ({
+              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+              content: item.message,
+              ts: item.timestamp
+            }));
+            
+            method = 'queryWithArrayPartitionKey';
           }
-
-        } catch (diagError) {
-          console.error('❌ Error en diagnóstico:', diagError);
+        } catch (arrayPKError) {
+          console.error('❌ Error en query con partitionKey array:', arrayPKError.message);
         }
       }
 
-      // 🎯 MÉTODO 5: Fallback en memoria
-      if ((!items || items.length === 0) && !cosmosAvailable()) {
-        console.log('🔍 Usando fallback en memoria...');
-        items = [];
-        method = 'memory';
+      // 🎯 MÉTODO 4: Verificación de configuración de partitionKey
+      if ((!items || items.length === 0) && cosmosAvailable()) {
+        console.log('🔍 Verificando configuración de Cosmos...');
+        try {
+          // Obtener info del container
+          const containerInfo = cosmos.getConfigInfo();
+          console.log('📊 Configuración de Cosmos:', {
+            partitionKey: containerInfo?.partitionKey,
+            database: containerInfo?.database,
+            container: containerInfo?.container
+          });
+
+          // Query de diagnóstico más amplia
+          const diagQuery = `
+            SELECT TOP 10 c.id, c.userToken, c.partitionKey, c.documentType, c.messageType, c.message
+            FROM c
+          `;
+
+          const { resources: allDocs } = await cosmos.container.items
+            .query({ query: diagQuery })
+            .fetchAll();
+
+          console.log(`🔍 Query diagnóstico general encontró: ${allDocs?.length || 0} documentos`);
+          
+          if (allDocs && allDocs.length > 0) {
+            console.log('📊 Primeros documentos en la base:');
+            allDocs.slice(0, 5).forEach((doc, idx) => {
+              console.log(`   ${idx + 1}. UserToken: ${doc.userToken?.substring(0, 8)}..., PartitionKey: ${doc.partitionKey?.substring?.(0, 8) || doc.partitionKey}, DocumentType: ${doc.documentType}`);
+              console.log(`      Message: "${doc.message?.substring(0, 30)}..."`);
+            });
+
+            // Buscar documentos que coincidan con nuestro token
+            const matchingDocs = allDocs.filter(doc => doc.userToken === token);
+            console.log(`🎯 Documentos que coinciden con el token: ${matchingDocs.length}`);
+            
+            if (matchingDocs.length > 0) {
+              const validMessages = matchingDocs
+                .filter(doc => doc.message && doc.message.trim() !== '')
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                .map(doc => ({
+                  role: doc.messageType === 'bot' ? 'assistant' : (doc.messageType === 'system' ? 'system' : 'user'),
+                  content: doc.message,
+                  ts: doc.timestamp
+                }));
+
+              if (validMessages.length > 0) {
+                items = validMessages.slice(-Number(limit));
+                method = 'diagnosticGeneralQuery';
+                console.log(`📖 Extraídos del diagnóstico general: ${items.length} mensajes`);
+              }
+            }
+          }
+        } catch (diagError) {
+          console.error('❌ Error en diagnóstico de configuración:', diagError.message);
+        }
       }
 
     } catch (methodError) {
@@ -537,11 +576,11 @@ export async function history(req, res) {
       items = [];
     }
 
-    // Normalizar respuesta y ordenar por timestamp
+    // Normalizar respuesta
     const normalizedItems = (items || [])
       .sort((a, b) => new Date(a.ts || a.timestamp) - new Date(b.ts || b.timestamp))
       .map((item, index) => ({
-        id: `${token}_${Date.now()}_${index}`,
+        id: `${token.substring(0, 8)}_${Date.now()}_${index}`,
         message: item.content || item.message,
         type: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
         messageType: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
@@ -558,6 +597,8 @@ export async function history(req, res) {
       normalizedItems.slice(0, 3).forEach((msg, idx) => {
         console.log(`   ${idx + 1}. ${msg.type}: ${msg.message.substring(0, 50)}...`);
       });
+    } else {
+      console.log(`⚠️ No se encontraron mensajes con ningún método`);
     }
 
     return res.json({ 
@@ -570,7 +611,7 @@ export async function history(req, res) {
         itemsFound: normalizedItems.length,
         error: error,
         timestamp: new Date().toISOString(),
-        queryApproach: 'no-orderby-manual-sort'
+        partitionKeyTests: 'multiple-approaches-tested'
       }
     });
     
