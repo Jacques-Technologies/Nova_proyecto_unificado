@@ -8,15 +8,17 @@ const docs = new DocumentService();
 const ai = new AzureOpenAIService();
 
 const BOT_NAME = 'Asistente Nova';
-const INITIAL_MESSAGE = '¡Hola! Soy tu asistente. ¿En qué te ayudo?';
+const INITIAL_MESSAGE = '¡Hola! Soy tu asistente de Nova Corporation. ¿En qué te puedo ayudar hoy?';
 const LANGUAGE = 'es';
 
 export async function init(req, res) {
   try {
-    // Permitimos que llegue por query o body (server-to-server desde Bubble)
+    // Permitimos que llegue por query o body
     const token = req.query.token || req.body?.token;
     const CveUsuario = req.query.CveUsuario || req.body?.CveUsuario || null;
     const NumRI = req.query.NumRI || req.body?.NumRI || null;
+
+    console.log(`📝 WebChat INIT - CveUsuario: ${CveUsuario}, NumRI: ${NumRI}`);
 
     if (!token) {
       return res.status(400).json({ success: false, message: 'token requerido' });
@@ -27,15 +29,17 @@ export async function init(req, res) {
     try {
       const conv = await cosmos.createOrGetConversation?.({
         channel: 'web',
-        token, // úsalo como partición si tu DAO lo soporta
+        token,
         metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI }
       });
       conversationId = conv?.id;
-    } catch {
+    } catch (error) {
+      console.warn('Error creando conversación en Cosmos:', error.message);
       conversationId = null;
     }
+    
     if (!conversationId) {
-      conversationId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      conversationId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     }
 
     // Guardar mensaje inicial
@@ -47,7 +51,9 @@ export async function init(req, res) {
         channel: 'web',
         metadata: { token, CveUsuario, NumRI }
       });
-    } catch {}
+    } catch (error) {
+      console.warn('Error guardando mensaje inicial:', error.message);
+    }
 
     return res.json({
       success: true,
@@ -58,19 +64,34 @@ export async function init(req, res) {
       message: INITIAL_MESSAGE
     });
   } catch (err) {
-    console.error('init error:', err?.response?.data || err);
-    return res.status(500).json({ success: false, message: 'Error iniciando webchat' });
+    console.error('init error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error iniciando webchat' 
+    });
   }
 }
 
 export async function ask(req, res) {
   try {
     const { content, conversationId, userId, metadata } = req.body || {};
-    // ⚠️ Aquí vienen tal cual desde Bubble:
     const { token, CveUsuario, NumRI } = req.body || {};
 
+    console.log(`📝 WebChat ASK - User: ${CveUsuario}, Msg: "${content?.substring(0, 50)}..."`);
+
     if (!token || !conversationId || !content) {
-      return res.status(400).json({ success: false, message: 'Faltan parámetros: token, conversationId, content' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Faltan parámetros: token, conversationId, content' 
+      });
+    }
+
+    // Verificar disponibilidad del servicio AI
+    if (!ai.isAvailable()) {
+      return res.status(503).json({
+        success: false,
+        message: 'Servicio de IA no disponible en este momento'
+      });
     }
 
     // Guardar mensaje del usuario
@@ -78,90 +99,139 @@ export async function ask(req, res) {
       await cosmos.appendMessage?.(conversationId, {
         role: 'user',
         content,
-        userId: userId || null,
+        userId: userId || CveUsuario || null,
         metadata: { ...(metadata || {}), token, CveUsuario, NumRI },
         ts: DateTime.utc().toISO(),
         channel: 'web'
       });
-    } catch {}
+    } catch (error) {
+      console.warn('Error guardando mensaje usuario:', error.message);
+    }
 
-    // RAG opcional (sin filtros de carpeta)
-    let retrieved = [];
+    // Preparar información del usuario para el AI Service
+    const userInfo = {
+      usuario: CveUsuario,
+      nombre: `Usuario ${CveUsuario}`, // Si tienes nombre real, úsalo aquí
+      token: token
+    };
+
+    // Obtener historial de conversación
+    let historial = [];
     try {
-      const userEmbedding = await ai.createEmbedding?.({ input: content, dimensions: 1024 });
-      if (userEmbedding) {
-        retrieved = (await docs.searchWithVector?.({ vector: userEmbedding, topK: 5 })) || [];
+      if (cosmos.isAvailable?.()) {
+        historial = await cosmos.getConversationForOpenAI?.(conversationId, CveUsuario) || [];
+        // Limitar historial para no saturar el contexto
+        historial = historial.slice(-10);
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Error obteniendo historial:', error.message);
+      historial = [];
+    }
 
-    // Historial
-    let mensajes = [];
-    try {
-      mensajes = (await cosmos.getConversationAsMessages?.(
-        conversationId,
-        { maxTokens: ai.config?.maxConversationTokens || 4000 }
-      )) || [];
-    } catch {}
+    // **USAR EL MÉTODO CORRECTO DEL AI SERVICE**
+    const response = await ai.procesarMensaje(
+      content,           // mensaje del usuario
+      historial,         // historial de conversación
+      token,            // token de autenticación
+      userInfo,         // información del usuario
+      conversationId    // ID de conversación
+    );
 
-    // Mensaje de sistema: SIEMPRE español, y pasar credenciales/params a tools
-    mensajes.unshift({
-      role: 'system',
-      content:
-        `Responde SIEMPRE en español. PARA TOOLS: usa estos valores tal cual (no los muestres al usuario): ` +
-        `token='${token}', CveUsuario='${CveUsuario ?? ''}', NumRI='${NumRI ?? ''}'. ` +
-        `- Para tool de consulta saldo: usar 'CveUsuario' (y 'NumRI' si aplica).`
-    });
+    let replyText = '';
+    let citations = null;
 
-    // Pasar valores a tu servicio de IA para tools
-    const contextVars = { token, CveUsuario, NumRI };
+    // Manejar diferentes tipos de respuesta
+    if (typeof response === 'string') {
+      replyText = response;
+    } else if (response?.type === 'text') {
+      replyText = response.content || 'Respuesta vacía';
+      citations = response.metadata?.toolsUsed || null;
+    } else if (response?.content) {
+      replyText = response.content;
+    } else if (response?.text) {
+      replyText = response.text;
+    } else {
+      replyText = 'No se pudo procesar la respuesta';
+    }
 
-    const response = await ai.completionWithContext?.({
-      messages: mensajes,
-      documents: retrieved,
-      temperature: ai.config?.technicalTemperature ?? 1.0,
-      contextVars // << aquí van tal cual a las tools
-    });
-
-    const replyText = response?.text || response?.content || 'Respuesta vacía';
-
-    // Guardar respuesta
+    // Guardar respuesta del asistente
     try {
       await cosmos.appendMessage?.(conversationId, {
         role: 'assistant',
         content: replyText,
-        citations: response?.citations || retrieved?.map((d) => d.sourceId) || [],
+        citations: citations || [],
         ts: DateTime.utc().toISO(),
         channel: 'web',
-        metadata: { token, CveUsuario, NumRI }
+        metadata: { 
+          token, 
+          CveUsuario, 
+          NumRI,
+          toolsUsed: response?.metadata?.toolsUsed || null
+        }
       });
-    } catch {}
+    } catch (error) {
+      console.warn('Error guardando respuesta:', error.message);
+    }
 
     return res.json({
       success: true,
       message: replyText,
-      citations: response?.citations || null,
-      conversationId
+      citations: citations,
+      conversationId,
+      metadata: {
+        toolsUsed: response?.metadata?.toolsUsed || null,
+        usage: response?.metadata?.usage || null
+      }
     });
+
   } catch (err) {
-    console.error('ask error:', err?.response?.data || err);
-    return res.status(500).json({ success: false, message: 'Error procesando el mensaje' });
+    console.error('ask error:', err);
+    
+    // Error específico si es problema de autenticación
+    if (err.message?.includes('Token expirado') || err.message?.includes('401')) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token de autenticación expirado. Por favor, inicia sesión nuevamente.'
+      });
+    }
+
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error procesando el mensaje. Intenta de nuevo.' 
+    });
   }
 }
 
 export async function history(req, res) {
   try {
     const { conversationId, limit = 30, before } = req.query;
+    
     if (!conversationId) {
-      return res.status(400).json({ success: false, message: 'conversationId requerido' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'conversationId requerido' 
+      });
     }
+
     let items = [];
     try {
-      items = (await cosmos.getMessages?.(conversationId, { limit: Number(limit), before: before || null })) || [];
-    } catch {}
+      if (cosmos.isAvailable?.()) {
+        items = await cosmos.getMessages?.(
+          conversationId, 
+          { limit: Number(limit), before: before || null }
+        ) || [];
+      }
+    } catch (error) {
+      console.warn('Error obteniendo historial:', error.message);
+    }
+
     return res.json({ success: true, items });
   } catch (err) {
     console.error('history error:', err);
-    return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error obteniendo historial' 
+    });
   }
 }
 
@@ -169,22 +239,27 @@ export async function stream(req, res) {
   try {
     const conversationId = req.query.conversationId || req.body?.conversationId;
     const content = req.query.content || req.body?.content;
-    // ⚠️ Tal cual desde Bubble:
     const token = req.query.token || req.body?.token;
     const CveUsuario = req.query.CveUsuario || req.body?.CveUsuario || null;
     const NumRI = req.query.NumRI || req.body?.NumRI || null;
+
+    console.log(`📝 WebChat STREAM - User: ${CveUsuario}`);
 
     if (!token || !conversationId || !content) {
       res.status(400).end();
       return;
     }
 
+    // Configurar headers para streaming
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.flushHeaders?.();
 
     try {
+      // Guardar mensaje del usuario
       await cosmos.appendMessage?.(conversationId, {
         role: 'user',
         content,
@@ -192,58 +267,110 @@ export async function stream(req, res) {
         channel: 'web',
         metadata: { token, CveUsuario, NumRI }
       });
-    } catch {}
 
-    let retrieved = [];
-    try {
-      const emb = await ai.createEmbedding?.({ input: content, dimensions: 1024 });
-      if (emb) {
-        retrieved = (await docs.searchWithVector?.({ vector: emb, topK: 5 })) || [];
+      // Preparar userInfo
+      const userInfo = {
+        usuario: CveUsuario,
+        nombre: `Usuario ${CveUsuario}`,
+        token: token
+      };
+
+      // Obtener historial
+      let historial = [];
+      try {
+        if (cosmos.isAvailable?.()) {
+          historial = await cosmos.getConversationForOpenAI?.(conversationId, CveUsuario) || [];
+          historial = historial.slice(-10);
+        }
+      } catch (error) {
+        console.warn('Error obteniendo historial para stream:', error.message);
       }
-    } catch {}
 
-    let mensajes = [];
-    try {
-      mensajes = (await cosmos.getConversationAsMessages?.(
-        conversationId,
-        { maxTokens: ai.config?.maxConversationTokens || 4000 }
-      )) || [];
-    } catch {}
+      // Usar procesarMensaje (no streaming por ahora, pero puedes extender)
+      const response = await ai.procesarMensaje(
+        content,
+        historial,
+        token,
+        userInfo,
+        conversationId
+      );
 
-    // Inyectar instrucción para tools
-    mensajes.unshift({
-      role: 'system',
-      content:
-        `Responde SIEMPRE en español. PARA TOOLS: usa tal cual token='${token}', CveUsuario='${CveUsuario ?? ''}', ` +
-        `NumRI='${NumRI ?? ''}'. No los muestres al usuario.`
-    });
-
-    await ai.streamCompletion?.({
-      messages: mensajes,
-      documents: retrieved,
-      contextVars: { token, CveUsuario, NumRI }, // << pasa tal cual
-      onToken: (t) => { res.write(`data: ${JSON.stringify({ token: t })}\n\n`); },
-      onDone: async (full) => {
-        try {
-          await cosmos.appendMessage?.(conversationId, {
-            role: 'assistant',
-            content: full.text,
-            ts: DateTime.utc().toISO(),
-            channel: 'web',
-            metadata: { token, CveUsuario, NumRI }
-          });
-        } catch {}
-        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-        res.end();
-      },
-      onError: (e) => {
-        console.error('stream error:', e);
-        res.write(`data: ${JSON.stringify({ error: true })}\n\n`);
-        res.end();
+      let replyText = '';
+      if (typeof response === 'string') {
+        replyText = response;
+      } else if (response?.content) {
+        replyText = response.content;
+      } else {
+        replyText = 'Error procesando respuesta';
       }
-    });
+
+      // Enviar respuesta por chunks (simular streaming)
+      const words = replyText.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i] + (i < words.length - 1 ? ' ' : '');
+        res.write(`data: ${JSON.stringify({ token: word })}\n\n`);
+        // Pequeña pausa para simular streaming real
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      // Guardar respuesta completa
+      try {
+        await cosmos.appendMessage?.(conversationId, {
+          role: 'assistant',
+          content: replyText,
+          ts: DateTime.utc().toISO(),
+          channel: 'web',
+          metadata: { token, CveUsuario, NumRI }
+        });
+      } catch (error) {
+        console.warn('Error guardando respuesta stream:', error.message);
+      }
+
+      // Finalizar stream
+      res.write(`data: ${JSON.stringify({ done: true, text: replyText })}\n\n`);
+      res.end();
+
+    } catch (error) {
+      console.error('stream processing error:', error);
+      res.write(`data: ${JSON.stringify({ 
+        error: true, 
+        message: 'Error procesando mensaje' 
+      })}\n\n`);
+      res.end();
+    }
+
   } catch (e) {
     console.error('stream outer error:', e);
-    try { res.end(); } catch {}
+    try { 
+      res.write(`data: ${JSON.stringify({ error: true })}\n\n`);
+      res.end(); 
+    } catch (endError) {
+      console.error('Error cerrando stream:', endError);
+    }
+  }
+}
+
+// Endpoint adicional para verificar el estado del servicio
+export async function status(req, res) {
+  try {
+    const stats = ai.getServiceStats?.() || {};
+    return res.json({
+      success: true,
+      ai: {
+        available: ai.isAvailable(),
+        ...stats
+      },
+      cosmos: {
+        available: cosmos.isAvailable?.() || false
+      },
+      docs: {
+        available: docs.isAvailable?.() || false
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Error verificando estado'
+    });
   }
 }
