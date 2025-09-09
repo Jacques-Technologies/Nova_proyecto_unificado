@@ -1,4 +1,4 @@
-// services/openaiService.js - VERSIÓN SIMPLIFICADA Y FUNCIONAL
+// services/openaiService.js - VERSIÓN COMPLETA CON text-embedding-3-large
 import 'dotenv/config';
 import OpenAI from 'openai';
 import { DateTime } from 'luxon';
@@ -9,11 +9,13 @@ import DocumentService from './documentService.js';
 
 const cosmosService= new CosmosService();
 const documentService = new DocumentService();
+
 export default class AzureOpenAIService {
   constructor() {
     this.initialized = false;
     this.openaiAvailable = false;
     this.tools = this.defineTools();
+    this.embeddingModel = 'text-embedding-3-large'; // Configuración para embeddings
     
     console.log('Inicializando Azure OpenAI Service...');
     this.initializeAzureOpenAI();
@@ -25,6 +27,9 @@ export default class AzureOpenAIService {
       const endpoint = process.env.OPENAI_ENDPOINT;
       const deploymentName = 'gpt-5-mini';
       const apiVersion =  '2024-12-01-preview';
+
+      // Configuración del modelo de embedding desde variable de entorno o default
+      this.embeddingModel = process.env.EMBEDDING_MODEL || 'text-embedding-3-large';
 
       if (!apiKey || !endpoint) {
         throw new Error('OPENAI_API_KEY y OPENAI_ENDPOINT requeridos');
@@ -46,6 +51,7 @@ export default class AzureOpenAIService {
       this.initialized = true;
 
       console.log('Azure OpenAI configurado correctamente');
+      console.log(`Modelo de embedding configurado: ${this.embeddingModel}`);
     } catch (error) {
       console.error('Error inicializando Azure OpenAI:', error.message);
       this.openaiAvailable = false;
@@ -583,6 +589,7 @@ INSTRUCCIONES:
       available: this.openaiAvailable,
       initialized: this.initialized,
       deployment: this.deploymentName,
+      embeddingModel: this.embeddingModel, // Información del modelo de embedding
       toolsCount: this.tools?.length || 0,
       integrations: {
         documentService: documentService?.isAvailable?.() || false,
@@ -600,31 +607,22 @@ INSTRUCCIONES:
   }
 
   /*
-   * Métodos de compatibilidad para el webchat
-   *
-   * Algunos controladores del proyecto (por ejemplo, webchatController.js)
-   * esperan que el servicio exponga createEmbedding() y
-   * completionWithContext(). La versión original de AzureOpenAIService
-   * implementa procesarMensaje() como punto de entrada principal, pero
-   * carece de estos métodos. Para evitar respuestas vacías en la
-   * interfaz web, se añaden aquí implementaciones mínimas que
-   * encapsulan la funcionalidad de embeddings y chat completions de
-   * OpenAI. Estas funciones devuelven un objeto compatible con lo
-   * esperado por el controlador: createEmbedding() devuelve el
-   * vector embedding (o null si no está disponible) y
-   * completionWithContext() devuelve un objeto { text: '...'} con
-   * el contenido generado por el modelo.
+   * MÉTODOS DE COMPATIBILIDAD PARA WEBCHAT
+   * Actualizados para usar text-embedding-3-large y max_completion_tokens
    */
+
   async createEmbedding({ input, dimensions = 1024 }) {
     try {
       if (!this.openaiAvailable) return null;
-      // Llamar a la API de embeddings. Si la API no soporta el
-      // parámetro dimensions, se omite.
+      
+      console.log(`Creando embedding con modelo: ${this.embeddingModel}, dimensiones: ${dimensions}`);
+      
       const params = {
-        model: 'text-embedding-3-large',
-        input
+        model: this.embeddingModel, // text-embedding-3-large
+        input,
+        dimensions: dimensions // Soportado por text-embedding-3-large
       };
-      if (dimensions) params.dimensions = dimensions;
+      
       const resp = await this.openai.embeddings.create(params);
       return resp?.data?.[0]?.embedding || null;
     } catch (error) {
@@ -637,20 +635,18 @@ INSTRUCCIONES:
     try {
       if (!this.openaiAvailable) return { text: '' };
 
-      // Construir un mensaje de sistema en español que incluya variables
-      // de contexto y documentos opcionales. Los documentos se
-      // concatenan para proporcionar contexto adicional al modelo.
+      // Construir contexto de documentos
       const docsText = Array.isArray(documents) && documents.length
         ? 'Contexto de documentos:\n' + documents
             .map((d, i) => `(${i + 1}) ${(d.text || d.content || '').substring(0, 1000)}`)
             .join('\n\n')
         : '';
 
-      const systemPrompt = `Responde SIEMPRE en español. Variables de tools: ${JSON.stringify(contextVars)}.` +
+      const systemPrompt = `Responde SIEMPRE en español. Variables de contexto: ${JSON.stringify(contextVars)}.` +
         (docsText ? `\n\n${docsText}` : '');
       const systemMessage = { role: 'system', content: systemPrompt };
 
-      // Filtrar mensajes proporcionados para asegurar que tienen role y content
+      // Filtrar y preparar mensajes
       const userMessages = (Array.isArray(messages) ? messages : []).filter(m => m && m.role && m.content);
       const finalMessages = [systemMessage, ...userMessages];
 
@@ -658,8 +654,9 @@ INSTRUCCIONES:
         model: this.deploymentName,
         messages: finalMessages,
         temperature,
-        max_tokens: 800
+        max_completion_tokens: 800 // Parámetro correcto para gpt-5-mini
       });
+      
       const text = resp?.choices?.[0]?.message?.content?.trim() || '';
       return { text };
     } catch (error) {
@@ -668,4 +665,3 @@ INSTRUCCIONES:
     }
   }
 }
-
