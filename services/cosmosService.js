@@ -171,6 +171,55 @@ export default class CosmosService {
     }
   }
 
+  async saveConversationInfo(conversationId, userId, userName, additionalData = {}) {
+        try {
+            if (!this.cosmosAvailable) {
+                console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
+                return null;
+            }
+
+            if (!conversationId || !userId) {
+                console.error('❌ saveConversationInfo: conversationId o userId faltante');
+                return null;
+            }
+
+            const conversationDocId = `conversation_${conversationId}`;
+            const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+
+            const conversationDoc = {
+                id: conversationDocId,
+                conversationId: conversationId,
+                userId: userId,
+                userName: userName || 'Usuario',
+                documentType: 'conversation_info',
+                createdAt: timestamp,
+                lastActivity: timestamp,
+                messageCount: 0,
+                isActive: true,
+                partitionKey: userId,
+                ttl: 60 * 60 * 24 * 90, // TTL: 90 días
+                version: '2.1.3',
+                ...additionalData
+            };
+
+            console.log(`💾 [${userId}] Guardando info de conversación: ${conversationDocId}`);
+
+            const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
+            
+            console.log(`✅ [${userId}] Info de conversación guardada exitosamente`);
+            return upsertedItem;
+
+        } catch (error) {
+            console.error(`❌ Error en saveConversationInfo:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId,
+                userName: userName
+            });
+            return null;
+        }
+    }
+    
   /** 📖 Obtener conversación (arreglo por roles) con reintento y fallback */
   async getConversationMessages(conversationId, userId) {
     try {
