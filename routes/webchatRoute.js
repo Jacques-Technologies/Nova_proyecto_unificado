@@ -16,6 +16,9 @@ router.post('/clear', WebchatController.clear);
 // Multi-chat estilo ChatGPT (sin eliminación)
 router.get('/conversations', WebchatController.conversations);           // listar por token
 router.patch('/conversation/:id', WebchatController.renameConversation); // renombrar
+// routes/webchat.js
+router.get('/webchat/summary', webchatController.summary);
+
 
 // Opcional: health/status del stack
 router.get('/status', WebchatController.status);
