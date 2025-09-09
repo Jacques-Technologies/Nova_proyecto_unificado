@@ -219,11 +219,6 @@ export async function ask(req, res) {
 }
 
 /* ============================================================
-   HISTORY
-   GET /api/webchat/history?token=...&limit=30&before=...&conversationId?=...
-   🔁 Si no envían conversationId, lee por TOKEN (última conversación activa)
-============================================================ */
-/* ============================================================
    HISTORY - VERSIÓN WEB (100% SOLO TOKEN)
    GET /api/webchat/history?token=...&limit=30&before=...
 ============================================================ */
@@ -250,12 +245,12 @@ export async function history(req, res) {
         console.log(`📖 getMessagesByToken encontró: ${items?.length || 0} items`);
       }
 
-      // 🎯 MÉTODO 2: Query directo a Cosmos (fallback)
+      // 🎯 MÉTODO 2: Query directo a Cosmos (fallback) - CORREGIDO
       if ((!items || items.length === 0) && cosmosAvailable()) {
-        console.log('🔍 Intentando query directo...');
+        console.log('🔍 Intentando query directo corregido...');
         try {
           let queryText = `
-            SELECT c.message, c.messageType, c.timestamp, c.conversationId
+            SELECT TOP @limit c.message, c.messageType, c.timestamp, c.conversationId
             FROM c
             WHERE c.userToken = @token
               AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
@@ -263,7 +258,10 @@ export async function history(req, res) {
               AND c.message != ''
           `;
 
-          const params = [{ name: '@token', value: token }];
+          const params = [
+            { name: '@token', value: token },
+            { name: '@limit', value: Number(limit) }
+          ];
           
           if (before) {
             queryText += ` AND c.timestamp < @before`;
@@ -271,23 +269,61 @@ export async function history(req, res) {
           }
 
           queryText += ` ORDER BY c.timestamp DESC`;
-          queryText = `SELECT TOP ${Number(limit)} * FROM (${queryText}) ORDER BY timestamp ASC`;
 
           const { resources } = await cosmos.container.items
             .query({ query: queryText, parameters: params }, { partitionKey: token })
             .fetchAll();
 
-          items = (resources || []).map(item => ({
-            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-            content: item.message,
-            ts: item.timestamp
-          }));
+          items = (resources || [])
+            .reverse() // Para que queden en orden cronológico
+            .map(item => ({
+              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+              content: item.message,
+              ts: item.timestamp
+            }));
           
           method = 'directQuery';
           console.log(`📖 Query directo encontró: ${items?.length || 0} items`);
         } catch (directQueryError) {
           console.error('❌ Error en query directo:', directQueryError);
           error = directQueryError.message;
+        }
+      }
+
+      // 🎯 MÉTODO 3: Query básico para diagnóstico (si aún no hay datos)
+      if ((!items || items.length === 0) && cosmosAvailable()) {
+        console.log('🔍 Query básico de diagnóstico...');
+        try {
+          const basicQuery = {
+            query: `
+              SELECT TOP 10 c.id, c.documentType, c.messageType, c.message, c.timestamp, c.userToken
+              FROM c
+              WHERE c.userToken = @token
+              ORDER BY c.timestamp DESC
+            `,
+            parameters: [{ name: '@token', value: token }]
+          };
+
+          const { resources } = await cosmos.container.items
+            .query(basicQuery, { partitionKey: token })
+            .fetchAll();
+
+          console.log(`🔍 Diagnóstico: encontrados ${resources?.length || 0} documentos totales para el token`);
+          
+          if (resources && resources.length > 0) {
+            console.log('📊 Tipos de documento encontrados:');
+            const docTypes = {};
+            resources.forEach(doc => {
+              docTypes[doc.documentType] = (docTypes[doc.documentType] || 0) + 1;
+              if (doc.messageType) {
+                console.log(`   - ${doc.documentType} | ${doc.messageType} | ${doc.message?.substring(0, 50)}...`);
+              }
+            });
+            console.log('📊 Resumen:', docTypes);
+          }
+
+        } catch (diagError) {
+          console.error('❌ Error en diagnóstico:', diagError);
         }
       }
 
