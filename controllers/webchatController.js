@@ -89,6 +89,12 @@ export async function init(req, res) {
    body: { token, conversationId?, content, CveUsuario?, NumRI?, metadata? }
    🔁 Lectura de historial por TOKEN (última conversación activa)
 ============================================================ */
+/* ============================================================
+   ASK: procesar un mensaje del usuario
+   POST /api/webchat/ask
+   body: { token, conversationId?, content, CveUsuario?, NumRI?, metadata? }
+   🔁 Lectura de historial por TOKEN (última conversación activa)
+============================================================ */
 export async function ask(req, res) {
   try {
     const { content, conversationId, metadata } = req.body || {};
@@ -109,50 +115,118 @@ export async function ask(req, res) {
 
     // Resolver conversationId: usar el que llegó o último por token; crear si no existe
     let convId = conversationId;
+    console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
+    
     if (!convId) {
+      console.log(`🔍 Buscando última conversación por token...`);
       convId = (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId'))
         ? (await cosmos.getLatestConversationId(token))
         : null;
+      console.log(`🎯 ConversationId encontrado: ${convId || 'null'}`);
 
       if (!convId) {
+        console.log(`➕ Creando nueva conversación...`);
         const created = (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation'))
-          ? await cosmos.createOrGetConversation({ channel: 'web', token, metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } })
+          ? await cosmos.createOrGetConversation({ 
+              channel: 'web', 
+              token, 
+              metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
+            })
           : null;
         convId = created?.id || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        console.log(`✅ Nueva conversación creada: ${convId}`);
       }
     }
 
     // Guardar mensaje del usuario
+    console.log(`💾 === GUARDANDO MENSAJE DEL USUARIO ===`);
+    console.log(`    - ConversationId: ${convId}`);
+    console.log(`    - Token: ${token?.substring(0, 8)}...`);
+    console.log(`    - Content: "${content?.substring(0, 100)}..."`);
+    console.log(`    - CveUsuario: ${CveUsuario}`);
+    console.log(`    - NumRI: ${NumRI}`);
+    
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(convId, {
+        console.log(`💾 Llamando cosmos.appendMessage para usuario...`);
+        
+        const userMessageData = {
           role: 'user',
           content,
           metadata: { ...(metadata || {}), token, CveUsuario, NumRI },
           ts: DateTime.utc().toISO(),
           channel: 'web',
           token: token
+        };
+        
+        console.log(`💾 Datos del mensaje:`, {
+          role: userMessageData.role,
+          contentLength: userMessageData.content?.length,
+          hasToken: !!userMessageData.token,
+          timestamp: userMessageData.ts
+        });
+        
+        const savedUserMsg = await cosmos.appendMessage(convId, userMessageData);
+        
+        console.log(`💾 Resultado appendMessage usuario:`, {
+          success: !!savedUserMsg,
+          id: savedUserMsg?.id,
+          memory: savedUserMsg?.memory,
+          type: typeof savedUserMsg
+        });
+        
+        if (savedUserMsg) {
+          console.log(`✅ Mensaje del usuario guardado exitosamente`);
+        } else {
+          console.warn(`⚠️ appendMessage retornó: ${savedUserMsg}`);
+        }
+      } else {
+        console.warn('⚠️ cosmos.appendMessage no está disponible como función');
+        console.log('🔍 Verificando cosmos:', {
+          cosmosExists: !!cosmos,
+          cosmosType: typeof cosmos,
+          appendMessageType: typeof cosmos?.appendMessage,
+          cosmosAvailable: cosmosAvailable()
         });
       }
     } catch (error) {
-      console.warn('Error guardando mensaje usuario:', error.message);
+      console.error('❌ Error guardando mensaje usuario:', error.message);
+      console.error('❌ Error completo:', error);
+      console.error('❌ Stack trace:', error.stack);
     }
 
     // Info de usuario para AI
     const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
+    console.log(`👤 Info de usuario para IA:`, userInfo);
 
     // Historial usando sólo token (última conversación activa)
     let historial = [];
+    console.log(`📚 === OBTENIENDO HISTORIAL ===`);
     try {
       if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
+        console.log(`📚 Llamando getConversationForOpenAIByToken...`);
         historial = await cosmos.getConversationForOpenAIByToken(token, true, 10);
+        console.log(`📚 Historial obtenido:`, {
+          length: historial?.length || 0,
+          sample: historial?.slice(0, 2)?.map(msg => `${msg.role}: ${msg.content?.substring(0, 30)}...`)
+        });
+      } else {
+        console.warn('⚠️ getConversationForOpenAIByToken no disponible');
       }
     } catch (error) {
-      console.warn('Error obteniendo historial (token):', error.message);
+      console.error('❌ Error obteniendo historial (token):', error.message);
       historial = [];
     }
 
     // Procesar con la IA
+    console.log(`🤖 === PROCESANDO CON IA ===`);
+    console.log(`🤖 Enviando a IA:`, {
+      contentLength: content?.length,
+      historialLength: historial?.length,
+      userToken: token?.substring(0, 8) + '...',
+      conversationId: convId
+    });
+    
     const response = await ai.procesarMensaje(
       content,
       historial,
@@ -160,6 +234,14 @@ export async function ask(req, res) {
       userInfo,
       convId
     );
+
+    console.log(`🤖 Respuesta de IA recibida:`, {
+      type: typeof response,
+      isString: typeof response === 'string',
+      hasContent: !!(response?.content),
+      hasText: !!(response?.text),
+      responseType: response?.type
+    });
 
     let replyText = '';
     let citations = null;
@@ -177,10 +259,23 @@ export async function ask(req, res) {
       replyText = 'No se pudo procesar la respuesta';
     }
 
+    console.log(`🤖 Texto de respuesta procesado:`, {
+      length: replyText?.length || 0,
+      preview: replyText?.substring(0, 100) + '...',
+      hasCitations: !!citations
+    });
+
     // Guardar respuesta del asistente
+    console.log(`💾 === GUARDANDO RESPUESTA DEL ASISTENTE ===`);
+    console.log(`    - ConversationId: ${convId}`);
+    console.log(`    - Response length: ${replyText?.length || 0}`);
+    console.log(`    - Has citations: ${!!citations}`);
+    
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(convId, {
+        console.log(`💾 Llamando cosmos.appendMessage para asistente...`);
+        
+        const assistantMessageData = {
           role: 'assistant',
           content: replyText,
           citations: citations || [],
@@ -188,11 +283,43 @@ export async function ask(req, res) {
           channel: 'web',
           token: token,
           metadata: { token, CveUsuario, NumRI, toolsUsed: response?.metadata?.toolsUsed || null }
+        };
+        
+        console.log(`💾 Datos del mensaje del asistente:`, {
+          role: assistantMessageData.role,
+          contentLength: assistantMessageData.content?.length,
+          citationsLength: assistantMessageData.citations?.length || 0,
+          hasToken: !!assistantMessageData.token,
+          timestamp: assistantMessageData.ts
         });
+        
+        const savedAssistantMsg = await cosmos.appendMessage(convId, assistantMessageData);
+        
+        console.log(`💾 Resultado appendMessage asistente:`, {
+          success: !!savedAssistantMsg,
+          id: savedAssistantMsg?.id,
+          memory: savedAssistantMsg?.memory,
+          type: typeof savedAssistantMsg
+        });
+        
+        if (savedAssistantMsg) {
+          console.log(`✅ Mensaje del asistente guardado exitosamente`);
+        } else {
+          console.warn(`⚠️ appendMessage asistente retornó: ${savedAssistantMsg}`);
+        }
+      } else {
+        console.warn('⚠️ cosmos.appendMessage no está disponible para asistente');
       }
     } catch (error) {
-      console.warn('Error guardando respuesta:', error.message);
+      console.error('❌ Error guardando respuesta del asistente:', error.message);
+      console.error('❌ Error completo:', error);
+      console.error('❌ Stack trace:', error.stack);
     }
+
+    console.log(`✅ === ASK COMPLETADO EXITOSAMENTE ===`);
+    console.log(`    - ConversationId final: ${convId}`);
+    console.log(`    - Respuesta length: ${replyText?.length}`);
+    console.log(`    - Citations: ${citations ? 'sí' : 'no'}`);
 
     return res.json({
       success: true,
@@ -205,7 +332,10 @@ export async function ask(req, res) {
       }
     });
   } catch (err) {
-    console.error('ask error:', err);
+    console.error('❌ === ASK ERROR GENERAL ===');
+    console.error('❌ Error:', err.message);
+    console.error('❌ Stack:', err.stack);
+    console.error('❌ Error completo:', err);
 
     if (err.message && (err.message.includes('Token expirado') || err.message.includes('401'))) {
       return res.status(401).json({
@@ -214,7 +344,14 @@ export async function ask(req, res) {
       });
     }
 
-    return res.status(500).json({ success: false, message: 'Error procesando el mensaje. Intenta de nuevo.' });
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error procesando el mensaje. Intenta de nuevo.',
+      debug: {
+        error: err.message,
+        timestamp: new Date().toISOString()
+      }
+    });
   }
 }
 
@@ -451,6 +588,7 @@ export async function history(req, res) {
     });
   }
 }
+
 
 /* ============================================================
    DEBUG TOKEN - Diagnóstico completo por token
@@ -828,6 +966,182 @@ export async function renameConversation(req, res) {
     return res.status(500).json({ success: false, message: 'Error renombrando conversación' });
   }
 }
+
+// Agrega este método temporal al webchatController.js para diagnóstico
+
+export async function deepDebug(req, res) {
+  try {
+    const { token } = req.query;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
+    }
+
+    console.log(`🔍 DEEP DEBUG para token: ${token.substring(0, 8)}...`);
+
+    const debug = {
+      token: token.substring(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+      cosmosAvailable: cosmosAvailable(),
+      searches: {},
+      rawData: [],
+      analysis: {}
+    };
+
+    if (!cosmosAvailable()) {
+      debug.error = 'Cosmos no disponible';
+      return res.json({ success: true, debug });
+    }
+
+    try {
+      // 1. Buscar TODOS los documentos por token (sin filtros)
+      console.log('🔍 Buscando TODOS los documentos...');
+      const allDocsQuery = {
+        query: `SELECT * FROM c WHERE c.userToken = @token`,
+        parameters: [{ name: '@token', value: token }]
+      };
+
+      const { resources: allDocs } = await cosmos.container.items
+        .query(allDocsQuery, { partitionKey: token })
+        .fetchAll();
+
+      debug.searches.allDocuments = {
+        query: 'SELECT * FROM c WHERE c.userToken = @token',
+        count: allDocs?.length || 0,
+        found: !!allDocs?.length
+      };
+
+      console.log(`📊 Documentos totales encontrados: ${allDocs?.length || 0}`);
+
+      // 2. Analizar la estructura de los documentos
+      if (allDocs && allDocs.length > 0) {
+        debug.rawData = allDocs.slice(0, 5); // Primeros 5 para inspección
+
+        // Análisis de campos
+        const fieldAnalysis = {
+          documentTypes: {},
+          messageTypes: {},
+          hasMessage: 0,
+          hasContent: 0,
+          hasText: 0,
+          fieldsFound: new Set(),
+          messageFields: []
+        };
+
+        allDocs.forEach(doc => {
+          // Documentar todos los campos
+          Object.keys(doc).forEach(key => {
+            fieldAnalysis.fieldsFound.add(key);
+          });
+
+          // Tipos de documento
+          if (doc.documentType) {
+            fieldAnalysis.documentTypes[doc.documentType] = 
+              (fieldAnalysis.documentTypes[doc.documentType] || 0) + 1;
+          }
+
+          // Tipos de mensaje
+          if (doc.messageType) {
+            fieldAnalysis.messageTypes[doc.messageType] = 
+              (fieldAnalysis.messageTypes[doc.messageType] || 0) + 1;
+          }
+
+          // Campos que podrían contener el mensaje
+          if (doc.message) {
+            fieldAnalysis.hasMessage++;
+            fieldAnalysis.messageFields.push({
+              id: doc.id,
+              messageType: doc.messageType,
+              documentType: doc.documentType,
+              message: doc.message.substring(0, 100) + '...',
+              timestamp: doc.timestamp
+            });
+          }
+          if (doc.content) fieldAnalysis.hasContent++;
+          if (doc.text) fieldAnalysis.hasText++;
+        });
+
+        fieldAnalysis.fieldsFound = Array.from(fieldAnalysis.fieldsFound);
+        debug.analysis = fieldAnalysis;
+
+        console.log('📊 Análisis de campos:');
+        console.log('   - DocumentTypes:', fieldAnalysis.documentTypes);
+        console.log('   - MessageTypes:', fieldAnalysis.messageTypes);
+        console.log('   - Con campo "message":', fieldAnalysis.hasMessage);
+        console.log('   - Campos encontrados:', fieldAnalysis.fieldsFound.slice(0, 10));
+
+        // 3. Intentar diferentes queries específicas
+        const queries = [
+          {
+            name: 'byDocumentType',
+            query: `SELECT c.message, c.messageType, c.timestamp FROM c WHERE c.userToken = @token AND c.documentType = 'conversation_message'`,
+          },
+          {
+            name: 'byMessageType',
+            query: `SELECT c.message, c.messageType, c.timestamp FROM c WHERE c.userToken = @token AND (c.messageType = 'user' OR c.messageType = 'bot')`,
+          },
+          {
+            name: 'anyMessage',
+            query: `SELECT c.message, c.messageType, c.timestamp FROM c WHERE c.userToken = @token AND IS_DEFINED(c.message)`,
+          },
+          {
+            name: 'anyContent',
+            query: `SELECT c.content, c.messageType, c.timestamp FROM c WHERE c.userToken = @token AND IS_DEFINED(c.content)`,
+          }
+        ];
+
+        for (const queryTest of queries) {
+          try {
+            console.log(`🔍 Probando query: ${queryTest.name}`);
+            const { resources } = await cosmos.container.items
+              .query({ 
+                query: queryTest.query, 
+                parameters: [{ name: '@token', value: token }] 
+              }, { partitionKey: token })
+              .fetchAll();
+
+            debug.searches[queryTest.name] = {
+              query: queryTest.query,
+              count: resources?.length || 0,
+              found: !!resources?.length,
+              sample: resources?.slice(0, 2) || []
+            };
+
+            console.log(`   Resultado: ${resources?.length || 0} items`);
+          } catch (queryError) {
+            debug.searches[queryTest.name] = {
+              query: queryTest.query,
+              error: queryError.message,
+              found: false
+            };
+            console.log(`   Error: ${queryError.message}`);
+          }
+        }
+
+      } else {
+        debug.analysis.noDocumentsFound = true;
+        console.log('⚠️ No se encontraron documentos para este token');
+      }
+
+    } catch (error) {
+      debug.error = error.message;
+      console.error('❌ Error en deep debug:', error);
+    }
+
+    return res.json({ success: true, debug });
+
+  } catch (err) {
+    console.error('❌ Deep debug error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      error: err.message,
+      message: 'Error en diagnóstico profundo'
+    });
+  }
+}
+
+// También necesitas agregar la ruta en webchatRoute.js:
+// router.get('/deep-debug', webchatController.deepDebug);
 
 // controllers/webchatController.js (añade al final del archivo)
 export async function summary(req, res) {

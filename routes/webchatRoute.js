@@ -25,5 +25,6 @@ router.get('/summary', webchatController.summary);
 
 // ➕ debug endpoints para diagnosticar problemas (SOLO TOKEN)
 router.get('/debug', webchatController.debugToken);
+router.get('/deep-debug', webchatController.deepDebug); // ← NUEVA LÍNEA
 
 export default router;
