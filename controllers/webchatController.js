@@ -14,16 +14,10 @@ const BOT_NAME = 'Asistente Nova';
 const INITIAL_MESSAGE = '¡Hola! Soy tu asistente de Nova Corporation. ¿En qué te puedo ayudar hoy?';
 const LANGUAGE = 'es';
 
-/** Helpers de disponibilidad */
-function isFn(obj, key) {
-  return obj && typeof obj[key] === 'function';
-}
-function aiAvailable() {
-  return isFn(ai, 'isAvailable') ? ai.isAvailable() : true;
-}
-function cosmosAvailable() {
-  return isFn(cosmos, 'isAvailable') ? cosmos.isAvailable() : true;
-}
+/** Helpers */
+function isFn(obj, key) { return obj && typeof obj[key] === 'function'; }
+function aiAvailable() { return isFn(ai, 'isAvailable') ? ai.isAvailable() : true; }
+function cosmosAvailable() { return isFn(cosmos, 'isAvailable') ? cosmos.isAvailable() : true; }
 
 /* ============================================================
    INIT: crear conversación y devolver saludo inicial
@@ -38,18 +32,19 @@ export async function init(req, res) {
 
     console.log(`📝 WebChat INIT - CveUsuario: ${CveUsuario}, NumRI: ${NumRI}`);
 
-    if (!token) {
-      return res.status(400).json({ success: false, message: 'token requerido' });
-    }
+    if (!token) return res.status(400).json({ success: false, message: 'token requerido' });
 
-    // Crear conversación en Cosmos o fallback local
+    // ⚠️ Owner para la partición
+    const ownerUserId = CveUsuario || 'anonymous';
+
+    // Crear conversación
     let conversationId;
     try {
       if (isFn(cosmos, 'createOrGetConversation')) {
         const conv = await cosmos.createOrGetConversation({
           channel: 'web',
           token,
-          metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI }
+          metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario: ownerUserId, NumRI }
         });
         conversationId = conv?.id;
       }
@@ -61,7 +56,7 @@ export async function init(req, res) {
       conversationId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     }
 
-    // Guardar mensaje inicial (no bloqueante)
+    // Guardar saludo inicial (no bloqueante) con owner correcto
     try {
       if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(conversationId, {
@@ -69,7 +64,8 @@ export async function init(req, res) {
           content: INITIAL_MESSAGE,
           ts: DateTime.utc().toISO(),
           channel: 'web',
-          metadata: { token, CveUsuario, NumRI }
+          userId: ownerUserId,
+          metadata: { token, CveUsuario: ownerUserId, NumRI }
         });
       }
     } catch (error) {
@@ -86,10 +82,7 @@ export async function init(req, res) {
     });
   } catch (err) {
     console.error('init error:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Error iniciando webchat'
-    });
+    return res.status(500).json({ success: false, message: 'Error iniciando webchat' });
   }
 }
 
@@ -113,13 +106,10 @@ export async function ask(req, res) {
     }
 
     if (!aiAvailable()) {
-      return res.status(503).json({
-        success: false,
-        message: 'Servicio de IA no disponible en este momento'
-      });
+      return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
-    // Guardar mensaje del usuario (no bloqueante)
+    // Guardar mensaje del usuario
     try {
       if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(conversationId, {
@@ -136,17 +126,13 @@ export async function ask(req, res) {
     }
 
     // Info de usuario para AI
-    const userInfo = {
-      usuario: CveUsuario,
-      nombre: `Usuario ${CveUsuario}`,
-      token
-    };
+    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario}`, token };
 
-    // Obtener historial (limitado)
+    // Historial (deja que Cosmos resuelva owner)
     let historial = [];
     try {
       if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-        historial = await cosmos.getConversationForOpenAI(conversationId, CveUsuario) || [];
+        historial = await cosmos.getConversationForOpenAI(conversationId, null) || [];
         historial = historial.slice(-10);
       }
     } catch (error) {
@@ -154,13 +140,13 @@ export async function ask(req, res) {
       historial = [];
     }
 
-    // Procesar con el servicio de IA
+    // Procesar con la IA
     const response = await ai.procesarMensaje(
-      content,        // mensaje del usuario
-      historial,      // historial
-      token,          // token
-      userInfo,       // info usuario
-      conversationId  // conversación
+      content,
+      historial,
+      token,
+      userInfo,
+      conversationId
     );
 
     let replyText = '';
@@ -179,7 +165,7 @@ export async function ask(req, res) {
       replyText = 'No se pudo procesar la respuesta';
     }
 
-    // Guardar respuesta del asistente (no bloqueante)
+    // Guardar respuesta del asistente
     try {
       if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(conversationId, {
@@ -188,12 +174,7 @@ export async function ask(req, res) {
           citations: citations || [],
           ts: DateTime.utc().toISO(),
           channel: 'web',
-          metadata: {
-            token,
-            CveUsuario,
-            NumRI,
-            toolsUsed: response?.metadata?.toolsUsed || null
-          }
+          metadata: { token, CveUsuario, NumRI, toolsUsed: response?.metadata?.toolsUsed || null }
         });
       }
     } catch (error) {
@@ -210,7 +191,6 @@ export async function ask(req, res) {
         usage: response?.metadata?.usage || null
       }
     });
-
   } catch (err) {
     console.error('ask error:', err);
 
@@ -221,54 +201,37 @@ export async function ask(req, res) {
       });
     }
 
-    return res.status(500).json({
-      success: false,
-      message: 'Error procesando el mensaje. Intenta de nuevo.'
-    });
+    return res.status(500).json({ success: false, message: 'Error procesando el mensaje. Intenta de nuevo.' });
   }
 }
 
 /* ============================================================
-   HISTORY: obtener historial de una conversación
+   HISTORY
    GET /api/webchat/history?conversationId=...&limit=30&before=...
 ============================================================ */
 export async function history(req, res) {
   try {
     const { conversationId, limit = 30, before } = req.query;
-
-    if (!conversationId) {
-      return res.status(400).json({
-        success: false,
-        message: 'conversationId requerido'
-      });
-    }
+    if (!conversationId) return res.status(400).json({ success: false, message: 'conversationId requerido' });
 
     let items = [];
     try {
       if (cosmosAvailable() && isFn(cosmos, 'getMessages')) {
-        items = await cosmos.getMessages(
-          conversationId,
-          { limit: Number(limit), before: before || null }
-        ) || [];
+        items = await cosmos.getMessages(conversationId, { limit: Number(limit), before: before || null }) || [];
       }
     } catch (error) {
       console.warn('Error obteniendo historial:', error.message);
     }
-
     return res.json({ success: true, items });
   } catch (err) {
     console.error('history error:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Error obteniendo historial'
-    });
+    return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
   }
 }
 
 /* ============================================================
-   STREAM: respuesta simulada en streaming por SSE
-   GET /api/webchat/stream (o POST)
-   (Simula tokens palabra por palabra)
+   STREAM (SSE simulado)
+   GET/POST /api/webchat/stream
 ============================================================ */
 export async function stream(req, res) {
   try {
@@ -285,7 +248,6 @@ export async function stream(req, res) {
       return;
     }
 
-    // Headers de streaming
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -301,39 +263,39 @@ export async function stream(req, res) {
           content,
           ts: DateTime.utc().toISO(),
           channel: 'web',
+          userId: CveUsuario || null,
           metadata: { token, CveUsuario, NumRI }
         });
       }
 
-      // Info usuario
-      const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario}`, token };
-
-      // Historial
+      // Historial para IA
       let historial = [];
       try {
         if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-          historial = await cosmos.getConversationForOpenAI(conversationId, CveUsuario) || [];
+          historial = await cosmos.getConversationForOpenAI(conversationId, null) || [];
           historial = historial.slice(-10);
         }
       } catch (error) {
         console.warn('Error obteniendo historial para stream:', error.message);
       }
 
-      // Procesar con AI (no streaming nativo)
+      const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario}`, token };
+
+      // Procesar con IA (no streaming nativo)
       const response = await ai.procesarMensaje(content, historial, token, userInfo, conversationId);
 
       let replyText = '';
-      if (typeof response === 'string')      replyText = response;
-      else if (response?.content)            replyText = response.content;
-      else if (response?.text)               replyText = response.text;
-      else                                   replyText = 'Error procesando respuesta';
+      if (typeof response === 'string') replyText = response;
+      else if (response?.content)       replyText = response.content;
+      else if (response?.text)          replyText = response.text;
+      else                              replyText = 'Error procesando respuesta';
 
-      // Enviar por "tokens" (palabras)
+      // Simular tokens
       const words = replyText.split(' ');
       for (let i = 0; i < words.length; i++) {
         const word = words[i] + (i < words.length - 1 ? ' ' : '');
         res.write(`data: ${JSON.stringify({ token: word })}\n\n`);
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(r => setTimeout(r, 50));
       }
 
       // Guardar respuesta completa
@@ -351,16 +313,13 @@ export async function stream(req, res) {
         console.warn('Error guardando respuesta stream:', error.message);
       }
 
-      // Finalizar stream
       res.write(`data: ${JSON.stringify({ done: true, text: replyText })}\n\n`);
       res.end();
-
     } catch (error) {
       console.error('stream processing error:', error);
       res.write(`data: ${JSON.stringify({ error: true, message: 'Error procesando mensaje' })}\n\n`);
       res.end();
     }
-
   } catch (e) {
     console.error('stream outer error:', e);
     try {
@@ -373,7 +332,7 @@ export async function stream(req, res) {
 }
 
 /* ============================================================
-   STATUS: health/status del stack
+   STATUS
    GET /api/webchat/status
 ============================================================ */
 export async function status(req, res) {
@@ -381,10 +340,7 @@ export async function status(req, res) {
     const stats = isFn(ai, 'getServiceStats') ? (ai.getServiceStats() || {}) : {};
     return res.json({
       success: true,
-      ai: {
-        available: aiAvailable(),
-        ...stats
-      },
+      ai: { available: aiAvailable(), ...stats },
       cosmos: { available: cosmosAvailable() },
       docs:   { available: isFn(docs, 'isAvailable') ? docs.isAvailable() : false }
     });
@@ -394,9 +350,8 @@ export async function status(req, res) {
 }
 
 /* ============================================================
-   CLEAR conversación
+   CLEAR
    POST /api/webchat/clear
-   body: { token, conversationId }
 ============================================================ */
 export async function clear(req, res) {
   try {
@@ -405,7 +360,6 @@ export async function clear(req, res) {
       return res.status(400).json({ success: false, message: 'token y conversationId requeridos' });
     }
 
-    // Limpieza real si el servicio lo soporta
     if (isFn(cosmos, 'clearConversation')) {
       try {
         const ok = await cosmos.clearConversation(conversationId);
@@ -415,7 +369,7 @@ export async function clear(req, res) {
       }
     }
 
-    // Fallback: marcar con system event
+    // Fallback: evento system
     try {
       if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(conversationId, {
@@ -438,7 +392,7 @@ export async function clear(req, res) {
 }
 
 /* ============================================================
-   Listar conversaciones del usuario (multi-chat)
+   LISTAR CONVERSACIONES
    GET /api/webchat/conversations?token=...&CveUsuario=...&limit=50
 ============================================================ */
 export async function conversations(req, res) {
@@ -481,9 +435,8 @@ export async function conversations(req, res) {
 }
 
 /* ============================================================
-   Renombrar conversación
+   RENOMBRAR
    PATCH /api/webchat/conversation/:id
-   body: { token, CveUsuario, title }
 ============================================================ */
 export async function renameConversation(req, res) {
   try {
@@ -524,17 +477,14 @@ export async function renameConversation(req, res) {
 }
 
 /* ============================================================
-   Eliminar conversación
+   ELIMINAR
    DELETE /api/webchat/conversation/:id
-   body: { token, CveUsuario }
 ============================================================ */
 export async function deleteConversation(req, res) {
   try {
     const id = req.params.id;
     const { token, CveUsuario } = req.body || {};
-    if (!token || !id) {
-      return res.status(400).json({ success: false, message: 'token e id requeridos' });
-    }
+    if (!token || !id) return res.status(400).json({ success: false, message: 'token e id requeridos' });
 
     let ok = false;
     try {

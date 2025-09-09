@@ -14,9 +14,9 @@ router.get('/stream', WebchatController.stream);
 router.post('/clear', WebchatController.clear);
 
 // NUEVO: multi-chat estilo ChatGPT
-router.get('/conversations', WebchatController.conversations);                // listar
-router.patch('/conversation/:id', WebchatController.renameConversation);     // renombrar
-router.delete('/conversation/:id', WebchatController.deleteConversation);    // eliminar
+router.get('/conversations', WebchatController.conversations);           // listar
+router.patch('/conversation/:id', WebchatController.renameConversation); // renombrar
+router.delete('/conversation/:id', WebchatController.deleteConversation);// eliminar
 
 // Opcional: health/status del stack
 router.get('/status', WebchatController.status);
