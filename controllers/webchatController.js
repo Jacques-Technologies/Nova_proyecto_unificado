@@ -234,22 +234,14 @@ export async function history(req, res) {
       });
     }
 
-    let items = [];
+    let items;
     try {
-      if (cosmosAvailable()) {
-        // 🔑 Buscar mensajes solo por token, sin depender de conversationId
-        if (isFn(cosmos, 'getMessagesByToken')) {
-          items = await cosmos.getMessagesByToken(token, { 
-            limit: Number(limit), 
-            before: before || null 
-          }) || [];
-        }
-      }
+      items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before: before || null }) || [];
     } catch (error) {
       console.warn('Error obteniendo historial por token:', error.message);
+      items = [];
     }
-
-    return res.json({ success: true, items: items || [] });
+    return res.json({ success: true, items });
   } catch (err) {
     console.error('history error:', err);
     return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
