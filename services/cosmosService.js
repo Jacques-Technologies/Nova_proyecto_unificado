@@ -562,16 +562,55 @@ export default class CosmosService {
   }
 
   /** 📜 Obtener mensajes por token (conversación más reciente) */
-  async getMessagesByToken(token, { limit = 30, before = null } = {}) {
-    try {
-      const convId = await this.getLatestConversationId(token);
-      if (!convId) return [];
-      return await this.getMessages(convId, { token, limit, before });
-    } catch (e) {
-      console.warn('getMessagesByToken error:', e?.message);
-      return [];
+  /** 📜 Obtener mensajes directamente por token (sin depender de conversationId) */
+async getMessagesByToken(token, { limit = 30, before = null } = {}) {
+  try {
+    if (!token) return [];
+
+    if (!this.cosmosAvailable) {
+      // 🔁 Fallback en memoria
+      const bucket = this._memEnsure(token);
+      const allMessages = [];
+      for (const [, conv] of bucket.conversations) {
+        allMessages.push(...conv.messages);
+      }
+      let list = allMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      if (before) list = list.filter(m => m.timestamp < before);
+      return list.slice(-limit).map(m => ({ role: m.role, content: m.content, ts: m.timestamp }));
     }
+
+    // 🔎 Cosmos: traer todos los mensajes por token
+    let queryText = `
+      SELECT c.message, c.messageType, c.timestamp
+      FROM c
+      WHERE c.userToken = @token
+        AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+      ORDER BY c.timestamp ASC
+    `;
+
+    const params = [{ name: '@token', value: token }];
+    if (before) {
+      queryText += ` AND c.timestamp < @before `;
+      params.push({ name: '@before', value: before });
+    }
+
+    const { resources } = await this.container.items
+      .query({ query: queryText, parameters: params }, { partitionKey: token })
+      .fetchAll();
+
+    return (resources || [])
+      .map((it) => ({
+        role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
+        content: it.message,
+        ts: it.timestamp,
+      }))
+      .slice(-limit);
+  } catch (e) {
+    console.warn('getMessagesByToken error:', e?.message);
+    return [];
   }
+}
+
 
   /** 📚 Historial (mensajes individuales) por token */
   async getConversationHistoryByToken(token, limit = 20) {

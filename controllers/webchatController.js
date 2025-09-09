@@ -225,7 +225,7 @@ export async function ask(req, res) {
 ============================================================ */
 export async function history(req, res) {
   try {
-    const { token, conversationId, limit = 30, before } = req.query;
+    const { token, limit = 30, before } = req.query;
     
     if (!token) {
       return res.status(400).json({ 
@@ -237,15 +237,8 @@ export async function history(req, res) {
     let items = [];
     try {
       if (cosmosAvailable()) {
-        if (conversationId && isFn(cosmos, 'getMessages')) {
-          // Si te mandan conversationId explícito, lo respetas
-          items = await cosmos.getMessages(conversationId, { 
-            token, 
-            limit: Number(limit), 
-            before: before || null 
-          }) || [];
-        } else if (isFn(cosmos, 'getMessagesByToken')) {
-          // Si no, lees por token (última conversación activa)
+        // 🔑 Buscar mensajes solo por token, sin depender de conversationId
+        if (isFn(cosmos, 'getMessagesByToken')) {
           items = await cosmos.getMessagesByToken(token, { 
             limit: Number(limit), 
             before: before || null 
@@ -253,7 +246,7 @@ export async function history(req, res) {
         }
       }
     } catch (error) {
-      console.warn('Error obteniendo historial (token):', error.message);
+      console.warn('Error obteniendo historial por token:', error.message);
     }
 
     return res.json({ success: true, items: items || [] });
@@ -262,6 +255,7 @@ export async function history(req, res) {
     return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
   }
 }
+
 
 /* ============================================================
    STREAM (SSE simulado)
