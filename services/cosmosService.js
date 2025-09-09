@@ -5,14 +5,15 @@ import 'dotenv/config';
 
 /**
  * Servicio de Cosmos DB - Persistencia con partición por /userToken
- * - Usa token como identificador principal para conversaciones y mensajes
- * - Elimina funciones de eliminación de conversaciones
- * - Mantiene compatibilidad con formato de mensajes por roles
+ * + Fallback en memoria por token cuando Cosmos no está disponible
  */
 export default class CosmosService {
   constructor() {
     this.initialized = false;
     this.initializationError = null;
+
+    // 🔁 Fallback en memoria: { [token]: { lastConvId, conversations: Map<convId, {info, messages:[]}> } }
+    this.memory = new Map();
 
     console.log('🚀 Inicializando Cosmos DB Service con token como identificador...');
     this.initializeCosmosClient();
@@ -28,13 +29,9 @@ export default class CosmosService {
 
       if (!endpoint || !key || !this.databaseId || !this.containerId) {
         this.initializationError = 'Variables de entorno de Cosmos DB faltantes';
-        console.warn('⚠️ Cosmos DB no configurado - Variables faltantes:');
-        console.warn(`   COSMOS_DB_ENDPOINT: ${!!endpoint}`);
-        console.warn(`   COSMOS_DB_KEY: ${!!key}`);
-        console.warn(`   COSMOS_DB_DATABASE_ID: ${!!this.databaseId}`);
-        console.warn(`   COSMOS_DB_CONTAINER_ID: ${!!this.containerId}`);
-        console.warn('ℹ️ Usando MemoryStorage como fallback');
+        console.warn('⚠️ Cosmos DB no configurado - usando fallback en memoria');
         this.cosmosAvailable = false;
+        this.initialized = true; // inicializado con fallback
         return;
       }
 
@@ -57,16 +54,65 @@ export default class CosmosService {
       this.initializationError = `Error inicializando Cosmos DB: ${error.message}`;
       console.error('❌ Error inicializando Cosmos DB:', error);
       this.cosmosAvailable = false;
+      this.initialized = true; // inicializado con fallback
     }
   }
 
+  // ===== Helpers memoria =====
+  _memEnsure(token) {
+    if (!this.memory.has(token)) {
+      this.memory.set(token, { lastConvId: null, conversations: new Map() });
+    }
+    return this.memory.get(token);
+  }
+
+  _memCreateConv(token, convId, baseInfo = {}) {
+    const bucket = this._memEnsure(token);
+    if (!bucket.conversations.has(convId)) {
+      const ts = DateTime.now().setZone('America/Mexico_City').toISO();
+      bucket.conversations.set(convId, {
+        info: {
+          id: `conversation_${convId}`,
+          conversationId: convId,
+          userToken: token,
+          documentType: 'conversation_info',
+          createdAt: ts,
+          lastActivity: ts,
+          messageCount: 0,
+          isActive: true,
+          channel: baseInfo.channel || 'web',
+          metadata: baseInfo.metadata || {},
+          title: baseInfo.title || baseInfo?.metadata?.title || 'Nuevo chat',
+        },
+        messages: [], // [{role, content, timestamp}]
+      });
+      bucket.lastConvId = convId;
+    }
+    return bucket.conversations.get(convId);
+  }
+
+  _memAppendMessage(token, convId, { role, content, ts }) {
+    const bucket = this._memEnsure(token);
+    const conv = bucket.conversations.get(convId);
+    if (!conv) return false;
+    conv.messages.push({
+      role,
+      content,
+      timestamp: ts || DateTime.now().setZone('America/Mexico_City').toISO(),
+    });
+    conv.info.messageCount = (conv.info.messageCount || 0) + 1;
+    conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+    bucket.lastConvId = convId;
+    return true;
+  }
+
   isAvailable() {
-    return this.cosmosAvailable && this.initialized;
+    return this.initialized === true; // disponible con Cosmos o con memoria
   }
 
   getConfigInfo() {
     return {
-      available: this.cosmosAvailable,
+      available: this.isAvailable(),
       initialized: this.initialized,
       database: this.databaseId,
       container: this.containerId,
@@ -77,9 +123,10 @@ export default class CosmosService {
         tokenBasedPartitioning: true,
         conversationMessagesFormat: true,
         openaiCompatibleFormat: true,
-        autoTTL: true,
-        upsertOperations: true,
-        concurrencySafe: true,
+        autoTTL: this.cosmosAvailable,
+        upsertOperations: this.cosmosAvailable,
+        concurrencySafe: this.cosmosAvailable,
+        memoryFallback: !this.cosmosAvailable,
       },
     };
   }
@@ -91,7 +138,12 @@ export default class CosmosService {
   /** 🧭 Devuelve el último conversationId activo para un token */
   async getLatestConversationId(token) {
     try {
-      if (!this.cosmosAvailable || !token) return null;
+      if (!token) return null;
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        return bucket.lastConvId || null;
+      }
 
       const q = {
         query: `
@@ -115,7 +167,13 @@ export default class CosmosService {
 
   /** 🔎 Buscar información de conversación por token + conversationId */
   async findConversationInfoByToken(conversationId, token) {
-    if (!this.cosmosAvailable || !token) return null;
+    if (!token) return null;
+
+    if (!this.cosmosAvailable) {
+      const bucket = this._memEnsure(token);
+      const conv = bucket.conversations.get(conversationId);
+      return conv?.info || null;
+    }
 
     const query = {
       query: `
@@ -145,11 +203,19 @@ export default class CosmosService {
   /** 💾 Guardar doc de conversación (arreglo de roles) */
   async saveConversationMessages(conversationId, token, messages, userInfo = null) {
     try {
-      if (!this.cosmosAvailable) {
-        console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
-        return null;
-      }
       if (!conversationId || !token || !Array.isArray(messages)) return null;
+
+      if (!this.cosmosAvailable) {
+        const conv = this._memCreateConv(token, conversationId, { metadata: { userName: userInfo?.nombre } });
+        conv.messages = messages.map(m => ({
+          role: m.role,
+          content: m.content,
+          timestamp: m.timestamp || DateTime.now().setZone('America/Mexico_City').toISO(),
+        }));
+        conv.info.messageCount = conv.messages.length;
+        conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+        return { id: `conversation_messages_${conversationId}`, memory: true };
+      }
 
       const id = `conversation_messages_${conversationId}`;
       const ts = DateTime.now().setZone('America/Mexico_City').toISO();
@@ -178,61 +244,16 @@ export default class CosmosService {
     }
   }
 
-  /** 📊 Guardar información de conversación */
-  async saveConversationInfo(conversationId, token, userName, additionalData = {}) {
-    try {
-      if (!this.cosmosAvailable) {
-        console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
-        return null;
-      }
-
-      if (!conversationId || !token) {
-        console.error('❌ saveConversationInfo: conversationId o token faltante');
-        return null;
-      }
-
-      const conversationDocId = `conversation_${conversationId}`;
-      const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
-
-      const conversationDoc = {
-        id: conversationDocId,
-        conversationId: conversationId,
-        userToken: token,
-        userName: userName || 'Usuario',
-        documentType: 'conversation_info',
-        createdAt: timestamp,
-        lastActivity: timestamp,
-        messageCount: 0,
-        isActive: true,
-        partitionKey: token,
-        ttl: 60 * 60 * 24 * 90,
-        version: '2.2.0',
-        ...additionalData
-      };
-
-      console.log(`💾 [${token}] Guardando info de conversación: ${conversationDocId}`);
-
-      const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
-      console.log(`✅ [${token}] Info de conversación guardada exitosamente`);
-      return upsertedItem;
-
-    } catch (error) {
-      console.error(`❌ Error en saveConversationInfo:`, {
-        error: error.message,
-        conversationId: conversationId,
-        token: token,
-        userName: userName
-      });
-      return null;
-    }
-  }
-    
   /** 📖 Obtener conversación (arreglo por roles) */
   async getConversationMessages(conversationId, token) {
     try {
+      if (!token) return [];
+
       if (!this.cosmosAvailable) {
-        console.warn('⚠️ Cosmos DB no disponible - conversación vacía');
-        return [];
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return [];
+        return conv.messages.slice(-20);
       }
 
       const docId = `conversation_messages_${conversationId}`;
@@ -306,10 +327,7 @@ export default class CosmosService {
   /** ➕ Agregar mensaje al arreglo por roles (y persistir) */
   async addMessageToConversation(conversationId, token, role, content, userInfo = null) {
     try {
-      if (!this.cosmosAvailable) {
-        console.warn('⚠️ Cosmos DB no disponible - no se agrega mensaje');
-        return false;
-      }
+      if (!conversationId || !token) return false;
       const validRoles = ['system', 'user', 'assistant'];
       if (!validRoles.includes(role)) return false;
 
@@ -331,6 +349,15 @@ export default class CosmosService {
         currentMessages,
         userInfo
       );
+
+      // Si estamos en memoria, también asegurar bucket
+      if (!this.cosmosAvailable) {
+        const conv = this._memCreateConv(token, conversationId, { metadata: { userName: userInfo?.nombre } });
+        conv.messages = currentMessages;
+        conv.info.messageCount = currentMessages.length;
+        conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+      }
+
       return result !== null;
     } catch (error) {
       console.error('❌ Error agregando mensaje (roles):', error);
@@ -341,15 +368,20 @@ export default class CosmosService {
   /** 💾 Guardar mensaje individual + sync a arreglo por roles */
   async saveMessage(message, conversationId, token, userName = null, messageType = 'user') {
     try {
-      if (!this.cosmosAvailable) {
-        console.warn('⚠️ Cosmos DB no disponible - mensaje no guardado');
-        return null;
-      }
       if (!message || !conversationId || !token) return null;
 
-      const messageId = this.generateMessageId();
-      const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+      const role = messageType === 'bot' ? 'assistant' : (messageType === 'system' ? 'system' : 'user');
+      const ts = DateTime.now().setZone('America/Mexico_City').toISO();
 
+      if (!this.cosmosAvailable) {
+        // Persistencia en memoria
+        this._memCreateConv(token, conversationId, { metadata: { userName } });
+        this._memAppendMessage(token, conversationId, { role, content: String(message).substring(0, 4000), ts });
+        return { id: this.generateMessageId(), memory: true };
+      }
+
+      // Cosmos
+      const messageId = this.generateMessageId();
       const messageDoc = {
         id: messageId,
         messageId,
@@ -358,8 +390,8 @@ export default class CosmosService {
         userName: userName || 'Usuario',
         message: String(message).substring(0, 4000),
         messageType, // 'user' | 'bot' | 'system'
-        timestamp,
-        dateCreated: timestamp,
+        timestamp: ts,
+        dateCreated: ts,
         partitionKey: token,
         ttl: 60 * 60 * 24 * 90,
         documentType: 'conversation_message',
@@ -372,7 +404,6 @@ export default class CosmosService {
 
       // Sincroniza arreglo por roles (best effort)
       try {
-        const role = messageType === 'bot' ? 'assistant' : (messageType === 'system' ? 'system' : 'user');
         await this.addMessageToConversation(conversationId, token, role, message, { nombre: userName });
       } catch (e) {
         console.warn('⚠️ Sync roles falló (continuando):', e.message);
@@ -395,7 +426,13 @@ export default class CosmosService {
   /** 🧹 Limpiar mensajes de conversación */
   async cleanConversationMessages(conversationId, token) {
     try {
-      if (!this.cosmosAvailable) return false;
+      if (!token || !conversationId) return false;
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (conv) conv.messages = [];
+        return true;
+      }
       const id = `conversation_messages_${conversationId}`;
       await this.container.item(id, token).delete();
       return true;
@@ -406,44 +443,30 @@ export default class CosmosService {
     }
   }
 
-  /** 📊 Stats de conversaciones (formato roles) */
-  async getConversationMessagesStats() {
-    try {
-      if (!this.cosmosAvailable) return { available: false };
-      const q = {
-        query: `
-          SELECT 
-            COUNT(1) as totalConversations,
-            SUM(c.messageCount) as totalMessages,
-            AVG(c.messageCount) as avgMessagesPerConversation
-          FROM c
-          WHERE c.documentType = 'conversation_messages_format'
-        `,
-      };
-      const { resources } = await this.container.items.query(q).fetchAll();
-      const stats = resources[0] || { totalConversations: 0, totalMessages: 0, avgMessagesPerConversation: 0 };
-      return {
-        available: true,
-        conversationMessagesFormat: {
-          totalConversations: stats.totalConversations,
-          totalMessages: stats.totalMessages,
-          avgMessagesPerConversation: Math.round(stats.avgMessagesPerConversation || 0),
-        },
-        timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
-      };
-    } catch (e) {
-      console.error('❌ Error stats (roles):', e);
-      return { available: false, error: e.message };
-    }
-  }
-
   /** 📚 Historial (mensajes individuales) en orden ascendente */
   async getConversationHistory(conversationId, token, limit = 20) {
     try {
-      if (!this.cosmosAvailable) return [];
+      if (!token) return [];
 
-      console.log(`📚 [${token}] OBTENIENDO HISTORIAL: ${conversationId}`);
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return [];
+        return conv.messages
+          .slice(-limit)
+          .map((m, idx) => ({
+            id: `${conversationId}_${idx}`,
+            message: m.content,
+            conversationId,
+            userToken: token,
+            userName: 'Usuario',
+            timestamp: m.timestamp,
+            type: m.role === 'assistant' ? 'assistant' : 'user',
+            messageType: m.role === 'assistant' ? 'bot' : (m.role === 'system' ? 'system' : 'user'),
+          }));
+      }
 
+      // Cosmos (igual que tu versión)
       const query = {
         query: `
           SELECT *
@@ -487,14 +510,18 @@ export default class CosmosService {
   /** 📜 getMessages (API /history) — devuelve [{role, content, ts}] */
   async getMessages(conversationId, opts = {}) {
     try {
-      if (!this.cosmosAvailable) return [];
-      
       const limit = Math.min(Number(opts.limit || 30), 100);
       const token = opts.token;
-      
-      if (!token) {
-        console.warn('getMessages: token requerido');
-        return [];
+      const before = opts.before || null;
+      if (!token) return [];
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return [];
+        let list = conv.messages;
+        if (before) list = list.filter(m => m.timestamp < before);
+        return list.slice(-limit).map(m => ({ role: m.role, content: m.content, ts: m.timestamp }));
       }
 
       let queryText = `
@@ -510,9 +537,9 @@ export default class CosmosService {
         { name: '@token', value: token },
       ];
 
-      if (opts.before) {
+      if (before) {
         queryText += ` AND c.timestamp < @before `;
-        params.push({ name: '@before', value: opts.before });
+        params.push({ name: '@before', value: before });
       }
 
       queryText += ` ORDER BY c.timestamp ASC`;
@@ -561,8 +588,12 @@ export default class CosmosService {
   /** 🗂️ Info de conversación */
   async getConversationInfo(conversationId, token) {
     try {
-      if (!this.cosmosAvailable || !token) return null;
-      
+      if (!token) return null;
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        return conv?.info || null;
+      }
       const id = `conversation_${conversationId}`;
       const { resource } = await this.container.item(id, token).read();
       return resource || null;
@@ -576,11 +607,6 @@ export default class CosmosService {
   /** 💾 Crear o recuperar conversation_info */
   async createOrGetConversation(opts = {}) {
     try {
-      if (!this.cosmosAvailable) {
-        const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        return { id };
-      }
-
       const channel = opts.channel || 'web';
       const token = opts.token;
       const md = opts.metadata || {};
@@ -590,8 +616,12 @@ export default class CosmosService {
       const nowIso = DateTime.now().setZone('America/Mexico_City').toISO();
 
       if (!token) {
-        console.warn('createOrGetConversation: token requerido');
         return { id: convId };
+      }
+
+      if (!this.cosmosAvailable) {
+        const conv = this._memCreateConv(token, convId, { channel, metadata: md, title: md.title, userName });
+        return { id: conv.info.conversationId };
       }
 
       const base = {
@@ -646,8 +676,16 @@ export default class CosmosService {
   /** 🔁 Actualizar actividad/counters */
   async updateConversationActivity(conversationId, token) {
     try {
-      if (!this.cosmosAvailable || !token) return false;
-      if (!conversationId) return false;
+      if (!token || !conversationId) return false;
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return false;
+        conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+        conv.info.messageCount = (conv.info.messageCount || 0) + 1;
+        return true;
+      }
 
       const docId = `conversation_${conversationId}`;
       const ts = DateTime.now().setZone('America/Mexico_City').toISO();
@@ -687,12 +725,21 @@ export default class CosmosService {
   /** 🗑️ Limpieza de conversación (mantener info pero limpiar mensajes) */
   async clearConversation(conversationId, token) {
     try {
-      if (!this.cosmosAvailable || !token) return false;
+      if (!token || !conversationId) return false;
 
-      // Limpiar mensajes del formato de roles
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return true;
+        conv.messages = [];
+        conv.info.messageCount = 0;
+        conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+        return true;
+      }
+
+      // Cosmos (igual que tu versión)
       await this.cleanConversationMessages(conversationId, token);
 
-      // Limpiar mensajes individuales
       const q = {
         query: `
           SELECT c.id
@@ -717,7 +764,6 @@ export default class CosmosService {
         } catch (_e) {}
       }
 
-      // Resetear contador en conversation_info
       const docId = `conversation_${conversationId}`;
       const now = DateTime.now().setZone('America/Mexico_City').toISO();
       
@@ -752,14 +798,19 @@ export default class CosmosService {
   /** 📋 Listar conversaciones por token */
   async listConversations(opts = {}) {
     try {
-      if (!this.cosmosAvailable) return [];
-      
       const token = opts.token;
       const limit = Math.min(Number(opts.limit || 50), 100);
-      
-      if (!token) {
-        console.warn('listConversations: token requerido');
-        return [];
+      if (!token) return [];
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const list = [];
+        for (const [, conv] of bucket.conversations) {
+          if (conv.info?.isActive) list.push(conv.info);
+        }
+        return list
+          .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity))
+          .slice(0, limit);
       }
 
       const query = {
@@ -791,12 +842,16 @@ export default class CosmosService {
   /** 📝 Renombrar conversación */
   async renameConversation(conversationId, title, opts = {}) {
     try {
-      if (!this.cosmosAvailable) return false;
-      
       const token = opts.token;
-      if (!token) {
-        console.warn('renameConversation: token requerido');
-        return false;
+      if (!token || !conversationId) return false;
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return false;
+        conv.info.title = title;
+        conv.info.lastActivity = DateTime.now().setZone('America/Mexico_City').toISO();
+        return true;
       }
 
       const docId = `conversation_${conversationId}`;
@@ -827,7 +882,15 @@ export default class CosmosService {
   /** 📊 Actualizar metadata de conversación */
   async updateConversationMetadata(conversationId, metadata, token) {
     try {
-      if (!this.cosmosAvailable || !token) return false;
+      if (!token || !conversationId) return false;
+
+      if (!this.cosmosAvailable) {
+        const bucket = this._memEnsure(token);
+        const conv = bucket.conversations.get(conversationId);
+        if (!conv) return false;
+        conv.info = { ...conv.info, ...metadata, lastActivity: DateTime.now().setZone('America/Mexico_City').toISO() };
+        return true;
+      }
 
       const docId = `conversation_${conversationId}`;
       
@@ -854,13 +917,42 @@ export default class CosmosService {
     }
   }
 
-  /** 📈 getStats: estadísticas del servicio */
+  /** 📈 getStats */
   async getStats() {
     try {
       if (!this.cosmosAvailable) {
-        return { available: false, error: this.initializationError };
+        // Stats en memoria
+        let conversations = 0, totalMessages = 0;
+        for (const [, bucket] of this.memory) {
+          conversations += bucket.conversations.size;
+          for (const [, conv] of bucket.conversations) {
+            totalMessages += conv.messages.length;
+          }
+        }
+        return {
+          available: true,
+          initialized: this.initialized,
+          database: '[memory]',
+          container: '[memory]',
+          partitionKey: '/userToken',
+          stats: {
+            totalDocuments: conversations + totalMessages,
+            conversations,
+            userMessages: 0,
+            botMessages: 0,
+            systemMessages: 0,
+            conversationMessagesFormat: 0,
+            totalMessages,
+            recentActivity: null,
+          },
+          conversationMessagesFormat: null,
+          timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
+          version: '2.2.0-TokenBased',
+          memoryFallback: true,
+        };
       }
 
+      // (Cosmos) tu versión original
       const statsResults = {
         totalDocuments: 0,
         conversations: 0,
