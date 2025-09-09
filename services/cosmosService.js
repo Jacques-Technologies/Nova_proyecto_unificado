@@ -4,17 +4,17 @@ import { DateTime } from 'luxon';
 import 'dotenv/config';
 
 /**
- * Servicio de Cosmos DB CORREGIDO - Persistencia estable con partición por /userId
- * - Resuelve el owner (userId) de una conversación cuando falta o es incorrecto
- * - Reintentos de upsert con la partitionKey correcta
- * - Fallback para reconstruir conversación desde mensajes individuales
+ * Servicio de Cosmos DB - Persistencia con partición por /userToken
+ * - Usa token como identificador principal para conversaciones y mensajes
+ * - Elimina funciones de eliminación de conversaciones
+ * - Mantiene compatibilidad con formato de mensajes por roles
  */
 export default class CosmosService {
   constructor() {
     this.initialized = false;
     this.initializationError = null;
 
-    console.log('🚀 Inicializando Cosmos DB Service con formato de conversación...');
+    console.log('🚀 Inicializando Cosmos DB Service con token como identificador...');
     this.initializeCosmosClient();
   }
 
@@ -24,7 +24,7 @@ export default class CosmosService {
       const key = process.env.COSMOS_DB_KEY;
       this.databaseId = process.env.COSMOS_DB_DATABASE_ID;
       this.containerId = process.env.COSMOS_DB_CONTAINER_ID;
-      this.partitionKey = process.env.COSMOS_DB_PARTITION_KEY || '/userId';
+      this.partitionKey = process.env.COSMOS_DB_PARTITION_KEY || '/userToken';
 
       if (!endpoint || !key || !this.databaseId || !this.containerId) {
         this.initializationError = 'Variables de entorno de Cosmos DB faltantes';
@@ -41,7 +41,7 @@ export default class CosmosService {
       this.client = new CosmosClient({
         endpoint,
         key,
-        userAgentSuffix: 'NovaBot/2.1.3-ConversationFormat',
+        userAgentSuffix: 'NovaBot/2.2.0-TokenBased',
       });
 
       this.database = this.client.database(this.databaseId);
@@ -72,10 +72,9 @@ export default class CosmosService {
       container: this.containerId,
       partitionKey: this.partitionKey,
       error: this.initializationError,
-      version: '2.1.3-ConversationFormat',
+      version: '2.2.0-TokenBased',
       features: {
-        individualMessages: true,
-        conversationHistory: true,
+        tokenBasedPartitioning: true,
         conversationMessagesFormat: true,
         openaiCompatibleFormat: true,
         autoTTL: true,
@@ -89,52 +88,43 @@ export default class CosmosService {
     return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  /** 🔎 Resuelve el owner de la conversación (userId real) */
-  async _resolveOwnerUserId(conversationId, hintedUserId) {
-    if (hintedUserId) return hintedUserId;
-    const info = await this.findConversationInfoAnyPartition(conversationId);
-    return info?.userId || 'anonymous';
-  }
+  /** 🔎 Buscar información de conversación por token */
+  async findConversationInfoByToken(conversationId, token) {
+    if (!this.cosmosAvailable || !token) return null;
 
-  /** 🧭 Buscar conversation_info sin conocer la partitionKey */
-  async findConversationInfoAnyPartition(conversationId) {
-    if (!this.cosmosAvailable) return null;
-
-    const byIdQuery = {
-      query: `SELECT TOP 1 * FROM c WHERE c.id = @id`,
-      parameters: [{ name: '@id', value: `conversation_${conversationId}` }],
+    const query = {
+      query: `
+        SELECT TOP 1 *
+        FROM c
+        WHERE c.conversationId = @conversationId
+          AND c.userToken = @token
+          AND c.documentType = 'conversation_info'
+      `,
+      parameters: [
+        { name: '@conversationId', value: conversationId },
+        { name: '@token', value: token }
+      ],
     };
 
     try {
-      let { resources } = await this.container.items.query(byIdQuery).fetchAll();
-      if (resources?.length) return resources[0];
-
-      const byConvQuery = {
-        query: `
-          SELECT TOP 1 *
-          FROM c
-          WHERE c.documentType = 'conversation_info'
-            AND c.conversationId = @conversationId
-        `,
-        parameters: [{ name: '@conversationId', value: conversationId }],
-      };
-
-      const res2 = await this.container.items.query(byConvQuery).fetchAll();
-      return res2?.resources?.[0] || null;
+      const { resources } = await this.container.items
+        .query(query, { partitionKey: token })
+        .fetchAll();
+      return resources?.[0] || null;
     } catch (e) {
-      console.warn('findConversationInfoAnyPartition error:', e?.message);
+      console.warn('findConversationInfoByToken error:', e?.message);
       return null;
     }
   }
 
-  /** 💾 Guardar doc de conversación (arreglo de roles) con reintento por PK */
-  async saveConversationMessages(conversationId, userId, messages, userInfo = null) {
+  /** 💾 Guardar doc de conversación (arreglo de roles) */
+  async saveConversationMessages(conversationId, token, messages, userInfo = null) {
     try {
       if (!this.cosmosAvailable) {
         console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
         return null;
       }
-      if (!conversationId || !userId || !Array.isArray(messages)) return null;
+      if (!conversationId || !token || !Array.isArray(messages)) return null;
 
       const id = `conversation_messages_${conversationId}`;
       const ts = DateTime.now().setZone('America/Mexico_City').toISO();
@@ -142,86 +132,79 @@ export default class CosmosService {
       const conversationDoc = {
         id,
         conversationId,
-        userId,
+        userToken: token,
         userName: userInfo?.nombre || 'Usuario',
         documentType: 'conversation_messages_format',
         messages,
         messageCount: messages.length,
         lastUpdated: ts,
         createdAt: ts,
-        partitionKey: userId,
+        partitionKey: token,
         ttl: 60 * 60 * 24 * 90,
-        version: '2.1.3-conversation-format',
+        version: '2.2.0-token-format',
         format: 'openai_chat_format',
       };
 
-      try {
-        const { resource } = await this.container.items.upsert(conversationDoc);
-        return resource;
-      } catch (_e) {
-        // Reintento: resolver owner y reintentar el upsert
-        const owner = await this._resolveOwnerUserId(conversationId, userId);
-        const retryDoc = { ...conversationDoc, userId: owner, partitionKey: owner };
-        const { resource: savedDoc2 } = await this.container.items.upsert(retryDoc);
-        return savedDoc2;
-      }
+      const { resource } = await this.container.items.upsert(conversationDoc);
+      return resource;
     } catch (error) {
       console.error('❌ Error guardando conversación (roles):', error.message);
       return null;
     }
   }
 
-  async saveConversationInfo(conversationId, userId, userName, additionalData = {}) {
-        try {
-            if (!this.cosmosAvailable) {
-                console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
-                return null;
-            }
+  /** 📊 Guardar información de conversación */
+  async saveConversationInfo(conversationId, token, userName, additionalData = {}) {
+    try {
+      if (!this.cosmosAvailable) {
+        console.warn('⚠️ Cosmos DB no disponible - conversación no guardada');
+        return null;
+      }
 
-            if (!conversationId || !userId) {
-                console.error('❌ saveConversationInfo: conversationId o userId faltante');
-                return null;
-            }
+      if (!conversationId || !token) {
+        console.error('❌ saveConversationInfo: conversationId o token faltante');
+        return null;
+      }
 
-            const conversationDocId = `conversation_${conversationId}`;
-            const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+      const conversationDocId = `conversation_${conversationId}`;
+      const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
-            const conversationDoc = {
-                id: conversationDocId,
-                conversationId: conversationId,
-                userId: userId,
-                userName: userName || 'Usuario',
-                documentType: 'conversation_info',
-                createdAt: timestamp,
-                lastActivity: timestamp,
-                messageCount: 0,
-                isActive: true,
-                partitionKey: userId,
-                ttl: 60 * 60 * 24 * 90, // TTL: 90 días
-                version: '2.1.3',
-                ...additionalData
-            };
+      const conversationDoc = {
+        id: conversationDocId,
+        conversationId: conversationId,
+        userToken: token,
+        userName: userName || 'Usuario',
+        documentType: 'conversation_info',
+        createdAt: timestamp,
+        lastActivity: timestamp,
+        messageCount: 0,
+        isActive: true,
+        partitionKey: token,
+        ttl: 60 * 60 * 24 * 90,
+        version: '2.2.0',
+        ...additionalData
+      };
 
-            console.log(`💾 [${userId}] Guardando info de conversación: ${conversationDocId}`);
+      console.log(`💾 [${token}] Guardando info de conversación: ${conversationDocId}`);
 
-            const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
-            
-            console.log(`✅ [${userId}] Info de conversación guardada exitosamente`);
-            return upsertedItem;
+      const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
+      
+      console.log(`✅ [${token}] Info de conversación guardada exitosamente`);
+      return upsertedItem;
 
-        } catch (error) {
-            console.error(`❌ Error en saveConversationInfo:`, {
-                error: error.message,
-                conversationId: conversationId,
-                userId: userId,
-                userName: userName
-            });
-            return null;
-        }
+    } catch (error) {
+      console.error(`❌ Error en saveConversationInfo:`, {
+        error: error.message,
+        conversationId: conversationId,
+        token: token,
+        userName: userName
+      });
+      return null;
     }
+  }
     
-  /** 📖 Obtener conversación (arreglo por roles) con reintento y fallback */
-  async getConversationMessages(conversationId, userId) {
+  /** 📖 Obtener conversación (arreglo por roles) */
+  async getConversationMessages(conversationId, token) {
     try {
       if (!this.cosmosAvailable) {
         console.warn('⚠️ Cosmos DB no disponible - conversación vacía');
@@ -229,44 +212,40 @@ export default class CosmosService {
       }
 
       const docId = `conversation_messages_${conversationId}`;
-      let effectiveUserId = userId;
 
-      // 1) Intento directo
-      if (effectiveUserId) {
-        try {
-          const { resource } = await this.container.item(docId, effectiveUserId).read();
-          if (resource?.messages) return resource.messages;
-        } catch (e) {
-          if (e.code !== 404) throw e;
-        }
-      }
-
-      // 2) Resolver owner y reintentar
-      effectiveUserId = await this._resolveOwnerUserId(conversationId, effectiveUserId);
       try {
-        const { resource } = await this.container.item(docId, effectiveUserId).read();
+        const { resource } = await this.container.item(docId, token).read();
         if (resource?.messages) return resource.messages;
       } catch (e) {
         if (e.code !== 404) throw e;
       }
 
-      // 3) Fallback: reconstruir desde mensajes individuales (cross-partition)
+      // Fallback: reconstruir desde mensajes individuales
       const q = {
         query: `
           SELECT c.message, c.messageType, c.timestamp
           FROM c
           WHERE c.conversationId = @conversationId
+            AND c.userToken = @token
             AND c.documentType = 'conversation_message'
           ORDER BY c.timestamp ASC
         `,
-        parameters: [{ name: '@conversationId', value: conversationId }],
+        parameters: [
+          { name: '@conversationId', value: conversationId },
+          { name: '@token', value: token }
+        ],
       };
-      const { resources } = await this.container.items.query(q).fetchAll();
+      
+      const { resources } = await this.container.items
+        .query(q, { partitionKey: token })
+        .fetchAll();
+        
       const mapped = (resources || []).map((m) => ({
         role: m.messageType === 'bot' ? 'assistant' : (m.messageType === 'system' ? 'system' : 'user'),
         content: m.message,
         timestamp: m.timestamp,
       }));
+      
       return mapped.slice(-20);
     } catch (error) {
       console.error('❌ Error obteniendo conversación (roles):', error.message);
@@ -275,9 +254,9 @@ export default class CosmosService {
   }
 
   /** 🧠 Formato OpenAI listo para usar */
-  async getConversationForOpenAI(conversationId, userId, includeSystem = true) {
+  async getConversationForOpenAI(conversationId, token, includeSystem = true) {
     try {
-      const msgs = await this.getConversationMessages(conversationId, userId);
+      const msgs = await this.getConversationMessages(conversationId, token);
       if (!msgs.length) return [];
       const filtered = includeSystem ? msgs : msgs.filter((m) => m.role !== 'system');
       return filtered.map((m) => ({ role: m.role, content: m.content }));
@@ -288,7 +267,7 @@ export default class CosmosService {
   }
 
   /** ➕ Agregar mensaje al arreglo por roles (y persistir) */
-  async addMessageToConversation(conversationId, userId, role, content, userInfo = null) {
+  async addMessageToConversation(conversationId, token, role, content, userInfo = null) {
     try {
       if (!this.cosmosAvailable) {
         console.warn('⚠️ Cosmos DB no disponible - no se agrega mensaje');
@@ -297,19 +276,21 @@ export default class CosmosService {
       const validRoles = ['system', 'user', 'assistant'];
       if (!validRoles.includes(role)) return false;
 
-      const effectiveUserId = await this._resolveOwnerUserId(conversationId, userId);
-      let currentMessages = await this.getConversationMessages(conversationId, effectiveUserId);
+      let currentMessages = await this.getConversationMessages(conversationId, token);
 
       currentMessages.push({
         role,
         content,
         timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
       });
-      if (currentMessages.length > 20) currentMessages = currentMessages.slice(-20);
+      
+      if (currentMessages.length > 20) {
+        currentMessages = currentMessages.slice(-20);
+      }
 
       const result = await this.saveConversationMessages(
         conversationId,
-        effectiveUserId,
+        token,
         currentMessages,
         userInfo
       );
@@ -321,13 +302,13 @@ export default class CosmosService {
   }
 
   /** 💾 Guardar mensaje individual + sync a arreglo por roles */
-  async saveMessage(message, conversationId, userId, userName = null, messageType = 'user') {
+  async saveMessage(message, conversationId, token, userName = null, messageType = 'user') {
     try {
       if (!this.cosmosAvailable) {
         console.warn('⚠️ Cosmos DB no disponible - mensaje no guardado');
         return null;
       }
-      if (!message || !conversationId || !userId) return null;
+      if (!message || !conversationId || !token) return null;
 
       const messageId = this.generateMessageId();
       const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
@@ -336,16 +317,16 @@ export default class CosmosService {
         id: messageId,
         messageId,
         conversationId,
-        userId,
+        userToken: token,
         userName: userName || 'Usuario',
         message: String(message).substring(0, 4000),
         messageType, // 'user' | 'bot' | 'system'
         timestamp,
         dateCreated: timestamp,
-        partitionKey: userId,
+        partitionKey: token,
         ttl: 60 * 60 * 24 * 90,
         documentType: 'conversation_message',
-        version: '2.1.3',
+        version: '2.2.0',
         isMessage: true,
         hasContent: true,
       };
@@ -355,14 +336,14 @@ export default class CosmosService {
       // Sincroniza arreglo por roles (best effort)
       try {
         const role = messageType === 'bot' ? 'assistant' : (messageType === 'system' ? 'system' : 'user');
-        await this.addMessageToConversation(conversationId, userId, role, message, { nombre: userName });
+        await this.addMessageToConversation(conversationId, token, role, message, { nombre: userName });
       } catch (e) {
         console.warn('⚠️ Sync roles falló (continuando):', e.message);
       }
 
       // Actualiza actividad (best effort)
       setImmediate(() => {
-        this.updateConversationActivity(conversationId, userId).catch((e) =>
+        this.updateConversationActivity(conversationId, token).catch((e) =>
           console.warn('⚠️ updateConversationActivity:', e.message)
         );
       });
@@ -374,12 +355,12 @@ export default class CosmosService {
     }
   }
 
-  /** 🧹 Eliminar arreglo por roles */
-  async cleanConversationMessages(conversationId, userId) {
+  /** 🧹 Limpiar mensajes de conversación */
+  async cleanConversationMessages(conversationId, token) {
     try {
       if (!this.cosmosAvailable) return false;
       const id = `conversation_messages_${conversationId}`;
-      await this.container.item(id, userId).delete();
+      await this.container.item(id, token).delete();
       return true;
     } catch (e) {
       if (e.code === 404) return true;
@@ -388,7 +369,7 @@ export default class CosmosService {
     }
   }
 
-  /** 📊 Stats de arreglo por roles */
+  /** 📊 Stats de conversaciones */
   async getConversationMessagesStats() {
     try {
       if (!this.cosmosAvailable) return { available: false };
@@ -420,64 +401,41 @@ export default class CosmosService {
   }
 
   /** 📚 Historial (mensajes individuales) en orden ascendente */
-  async getConversationHistory(conversationId, userId, limit = 20) {
+  async getConversationHistory(conversationId, token, limit = 20) {
     try {
       if (!this.cosmosAvailable) return [];
 
-      console.log(`📚 [${userId}] OBTENIENDO HISTORIAL: ${conversationId}`);
+      console.log(`📚 [${token}] OBTENIENDO HISTORIAL: ${conversationId}`);
 
-      const mainQuery = {
+      const query = {
         query: `
           SELECT *
           FROM c
           WHERE c.conversationId = @conversationId
-            AND c.userId = @userId
-            AND (c.messageType = 'user' OR c.messageType = 'bot')
+            AND c.userToken = @token
+            AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
           ORDER BY c.timestamp ASC
         `,
         parameters: [
           { name: '@conversationId', value: conversationId },
-          { name: '@userId', value: userId },
+          { name: '@token', value: token },
         ],
       };
 
-      let messages = [];
-      try {
-        const { resources } = await this.container.items
-          .query(mainQuery, { partitionKey: userId })
-          .fetchAll();
-        messages = resources;
-      } catch (e) {
-        console.warn('⚠️ Query principal falló:', e.message);
-      }
+      const { resources } = await this.container.items
+        .query(query, { partitionKey: token })
+        .fetchAll();
 
-      if (!messages.length) {
-        const wideQuery = {
-          query: `
-            SELECT *
-            FROM c
-            WHERE c.userId = @userId
-              AND c.documentType = 'conversation_message'
-            ORDER BY c.timestamp DESC
-          `,
-          parameters: [{ name: '@userId', value: userId }],
-        };
-        const { resources } = await this.container.items.query(wideQuery, { partitionKey: userId }).fetchAll();
-        messages = resources.filter(
-          (m) => m.conversationId === conversationId && (m.messageType === 'user' || m.messageType === 'bot')
-        );
-      }
+      if (!resources || !resources.length) return [];
 
-      if (!messages.length) return [];
-
-      return messages
+      return resources
         .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
         .slice(-limit)
         .map((m) => ({
           id: m.messageId || m.id,
           message: m.message || 'Mensaje vacío',
           conversationId: m.conversationId,
-          userId: m.userId,
+          userToken: m.userToken,
           userName: m.userName || 'Usuario',
           timestamp: m.timestamp,
           type: m.messageType === 'bot' ? 'assistant' : 'user',
@@ -489,17 +447,14 @@ export default class CosmosService {
     }
   }
 
-  /** 🗂️ Info de conversación (lectura directa si hay PK) */
-  async getConversationInfo(conversationId, userId) {
+  /** 🗂️ Info de conversación */
+  async getConversationInfo(conversationId, token) {
     try {
-      if (!this.cosmosAvailable) return null;
+      if (!this.cosmosAvailable || !token) return null;
+      
       const id = `conversation_${conversationId}`;
-
-      if (userId) {
-        const { resource } = await this.container.item(id, userId).read();
-        return resource || null;
-      }
-      return await this.findConversationInfoAnyPartition(conversationId);
+      const { resource } = await this.container.item(id, token).read();
+      return resource || null;
     } catch (e) {
       if (e.code === 404) return null;
       console.error('❌ Error getConversationInfo:', e.message);
@@ -507,7 +462,7 @@ export default class CosmosService {
     }
   }
 
-  /** 💾 Crear o recuperar conversation_info (owner = CveUsuario si existe) */
+  /** 💾 Crear o recuperar conversation_info */
   async createOrGetConversation(opts = {}) {
     try {
       if (!this.cosmosAvailable) {
@@ -516,18 +471,22 @@ export default class CosmosService {
       }
 
       const channel = opts.channel || 'web';
-      const token = opts.token || null;
+      const token = opts.token;
       const md = opts.metadata || {};
-      const userId = md.CveUsuario || md.userId || 'anonymous';
-      const userName = md.userName || `Usuario ${userId}`;
+      const userName = md.userName || `Usuario`;
       const convId = md.conversationId || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const docId = `conversation_${convId}`;
       const nowIso = DateTime.now().setZone('America/Mexico_City').toISO();
 
+      if (!token) {
+        console.warn('createOrGetConversation: token requerido');
+        return { id: convId };
+      }
+
       const base = {
         id: docId,
         conversationId: convId,
-        userId,
+        userToken: token,
         userName,
         documentType: 'conversation_info',
         createdAt: nowIso,
@@ -536,11 +495,10 @@ export default class CosmosService {
         isActive: true,
         channel,
         metadata: md,
-        partitionKey: userId,
+        partitionKey: token,
         ttl: 60 * 60 * 24 * 90,
-        version: '2.1.3',
+        version: '2.2.0',
         title: md.title || 'Nuevo chat',
-        token,
       };
 
       const { resource } = await this.container.items.upsert(base);
@@ -552,39 +510,40 @@ export default class CosmosService {
     }
   }
 
-  /** ➕ Append universal: resuelve owner si falta */
+  /** ➕ Append universal */
   async appendMessage(conversationId, msg) {
     try {
       if (!conversationId || !msg?.content) return null;
 
-      let effectiveUserId = msg.userId || msg?.metadata?.CveUsuario;
-      if (!effectiveUserId) {
-        effectiveUserId = await this._resolveOwnerUserId(conversationId, null);
+      const token = msg?.metadata?.token || msg.token;
+      if (!token) {
+        console.warn('appendMessage: token requerido');
+        return null;
       }
 
-      const userName = msg.userName || `Usuario ${effectiveUserId}`;
+      const userName = msg.userName || `Usuario`;
       const role = msg.role || 'user';
       const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
 
-      return await this.saveMessage(msg.content, conversationId, effectiveUserId, userName, messageType);
+      return await this.saveMessage(msg.content, conversationId, token, userName, messageType);
     } catch (e) {
       console.error('appendMessage error:', e);
       return null;
     }
   }
 
-  /** 🔁 Actualizar actividad/counters sin colisiones de concurrencia */
-  async updateConversationActivity(conversationId, userId) {
+  /** 🔁 Actualizar actividad/counters */
+  async updateConversationActivity(conversationId, token) {
     try {
-      if (!this.cosmosAvailable) return false;
-      if (!conversationId || !userId) return false;
+      if (!this.cosmosAvailable || !token) return false;
+      if (!conversationId) return false;
 
       const docId = `conversation_${conversationId}`;
       const ts = DateTime.now().setZone('America/Mexico_City').toISO();
 
       let existingDoc = null;
       try {
-        const { resource } = await this.container.item(docId, userId).read();
+        const { resource } = await this.container.item(docId, token).read();
         existingDoc = resource;
       } catch (e) {
         if (e.code !== 404) console.warn('⚠️ read conversation_info:', e.message);
@@ -594,16 +553,16 @@ export default class CosmosService {
         ...(existingDoc || {}),
         id: docId,
         conversationId,
-        userId,
+        userToken: token,
         userName: existingDoc?.userName || 'Usuario',
         documentType: 'conversation_info',
         createdAt: existingDoc?.createdAt || ts,
         lastActivity: ts,
         messageCount: (existingDoc?.messageCount || 0) + 1,
         isActive: true,
-        partitionKey: userId,
+        partitionKey: token,
         ttl: 60 * 60 * 24 * 90,
-        version: '2.1.3',
+        version: '2.2.0',
       };
 
       const { resource } = await this.container.items.upsert(updatedDoc);
@@ -614,51 +573,63 @@ export default class CosmosService {
     }
   }
 
-  /** 🗑️ Limpieza lógica: borra mensajes (roles + individuales) y resetea counters */
-  async clearConversation(conversationId) {
+  /** 🗑️ Limpieza de conversación (mantener info pero limpiar mensajes) */
+  async clearConversation(conversationId, token) {
     try {
-      if (!this.cosmosAvailable) return false;
+      if (!this.cosmosAvailable || !token) return false;
 
-      const info = await this.getConversationInfo(conversationId, undefined);
-      const userId = info?.userId;
-      if (!userId) return false;
+      // Limpiar mensajes del formato de roles
+      await this.cleanConversationMessages(conversationId, token);
 
-      await this.cleanConversationMessages(conversationId, userId);
-
+      // Limpiar mensajes individuales
       const q = {
         query: `
           SELECT c.id
           FROM c
           WHERE c.conversationId = @conversationId
-            AND c.userId = @userId
-            AND c.documentType != 'conversation_info'
+            AND c.userToken = @token
+            AND c.documentType = 'conversation_message'
         `,
         parameters: [
           { name: '@conversationId', value: conversationId },
-          { name: '@userId', value: userId },
+          { name: '@token', value: token },
         ],
       };
 
-      const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
+      const { resources } = await this.container.items
+        .query(q, { partitionKey: token })
+        .fetchAll();
+        
       for (const d of resources || []) {
         try {
-          await this.container.item(d.id, userId).delete();
+          await this.container.item(d.id, token).delete();
         } catch (_e) {}
       }
 
+      // Resetear contador en conversation_info
       const docId = `conversation_${conversationId}`;
       const now = DateTime.now().setZone('America/Mexico_City').toISO();
+      
+      let existingInfo = null;
+      try {
+        const { resource } = await this.container.item(docId, token).read();
+        existingInfo = resource;
+      } catch (e) {
+        if (e.code !== 404) throw e;
+      }
+
       const updated = {
-        ...(info || {}),
+        ...(existingInfo || {}),
         id: docId,
         conversationId,
-        userId,
+        userToken: token,
         documentType: 'conversation_info',
         lastActivity: now,
         messageCount: 0,
         isActive: true,
-        partitionKey: userId,
+        partitionKey: token,
       };
+      
       await this.container.items.upsert(updated);
       return true;
     } catch (e) {
@@ -667,104 +638,30 @@ export default class CosmosService {
     }
   }
 
-  /** 🧨 Eliminar conversación (duro) */
-  async deleteConversation(conversationId, userOrOpts) {
-    try {
-      if (!this.cosmosAvailable) return false;
-
-      let userId = typeof userOrOpts === 'string' ? userOrOpts : (userOrOpts?.by || null);
-      if (!userId) userId = await this._resolveOwnerUserId(conversationId, null);
-      if (!userId) return false;
-
-      const q = {
-        query: `
-          SELECT c.id
-          FROM c
-          WHERE c.conversationId = @conversationId
-            AND c.userId = @userId
-        `,
-        parameters: [
-          { name: '@conversationId', value: conversationId },
-          { name: '@userId', value: userId },
-        ],
-      };
-
-      const { resources: docs } = await this.container.items
-        .query(q, { partitionKey: userId })
-        .fetchAll();
-
-      let deletedCount = 0;
-      for (const doc of docs) {
-        try {
-          await this.container.item(doc.id, userId).delete();
-          deletedCount++;
-        } catch (error) {
-          console.warn(`⚠️ Error eliminando doc ${doc.id}:`, error.message);
-        }
-      }
-      await this.cleanConversationMessages(conversationId, userId);
-      return deletedCount > 0;
-    } catch (error) {
-      console.error('❌ deleteConversation:', error);
-      return false;
-    }
-  }
-
-  /** 🧰 Soft delete */
-  async softDeleteConversation(conversationId, opts = {}) {
-    try {
-      if (!this.cosmosAvailable) return false;
-
-      const info = await this.getConversationInfo(conversationId, opts.by || undefined);
-      const userId = info?.userId || opts.by;
-      if (!userId) return false;
-
-      const docId = `conversation_${conversationId}`;
-      const updated = {
-        ...(info || {}),
-        id: docId,
-        conversationId,
-        userId,
-        documentType: 'conversation_info',
-        isActive: false,
-        archived: true,
-        partitionKey: userId,
-      };
-
-      const { resource } = await this.container.items.upsert(updated);
-      return !!resource;
-    } catch (e) {
-      console.warn('softDeleteConversation error:', e?.message);
-      return false;
-    }
-  }
-
   /** 📜 getMessages (API /history) — devuelve [{role, content, ts}] */
   async getMessages(conversationId, opts = {}) {
     try {
       if (!this.cosmosAvailable) return [];
+      
       const limit = Math.min(Number(opts.limit || 30), 100);
-
-      let userId = opts.userId;
-      if (!userId) {
-        userId = await this._resolveOwnerUserId(conversationId, null);
-        if (!userId) {
-          console.warn('getMessages: no se pudo resolver userId para', conversationId);
-          return [];
-        }
+      const token = opts.token;
+      
+      if (!token) {
+        console.warn('getMessages: token requerido');
+        return [];
       }
 
       let queryText = `
         SELECT c.id, c.message, c.messageType, c.timestamp
         FROM c
         WHERE c.conversationId = @conversationId
-          AND c.userId = @userId
+          AND c.userToken = @token
           AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
       `;
 
       const params = [
         { name: '@conversationId', value: conversationId },
-        { name: '@userId', value: userId },
+        { name: '@token', value: token },
       ];
 
       if (opts.before) {
@@ -775,7 +672,7 @@ export default class CosmosService {
       queryText += ` ORDER BY c.timestamp ASC`;
 
       const { resources } = await this.container.items
-        .query({ query: queryText, parameters: params }, { partitionKey: userId })
+        .query({ query: queryText, parameters: params }, { partitionKey: token })
         .fetchAll();
 
       return (resources || [])
@@ -791,7 +688,112 @@ export default class CosmosService {
     }
   }
 
-  /** 📈 getStats: incluye conversations, messages y formato por roles */
+  /** 📋 Listar conversaciones por token */
+  async listConversations(opts = {}) {
+    try {
+      if (!this.cosmosAvailable) return [];
+      
+      const token = opts.token;
+      const limit = Math.min(Number(opts.limit || 50), 100);
+      
+      if (!token) {
+        console.warn('listConversations: token requerido');
+        return [];
+      }
+
+      const query = {
+        query: `
+          SELECT TOP @limit *
+          FROM c
+          WHERE c.userToken = @token
+            AND c.documentType = 'conversation_info'
+            AND c.isActive = true
+          ORDER BY c.lastActivity DESC
+        `,
+        parameters: [
+          { name: '@token', value: token },
+          { name: '@limit', value: limit }
+        ],
+      };
+
+      const { resources } = await this.container.items
+        .query(query, { partitionKey: token })
+        .fetchAll();
+
+      return resources || [];
+    } catch (e) {
+      console.warn('listConversations error:', e?.message);
+      return [];
+    }
+  }
+
+  /** 📝 Renombrar conversación */
+  async renameConversation(conversationId, title, opts = {}) {
+    try {
+      if (!this.cosmosAvailable) return false;
+      
+      const token = opts.token;
+      if (!token) {
+        console.warn('renameConversation: token requerido');
+        return false;
+      }
+
+      const docId = `conversation_${conversationId}`;
+      
+      let existingDoc = null;
+      try {
+        const { resource } = await this.container.item(docId, token).read();
+        existingDoc = resource;
+      } catch (e) {
+        if (e.code === 404) return false;
+        throw e;
+      }
+
+      const updatedDoc = {
+        ...existingDoc,
+        title,
+        lastActivity: DateTime.now().setZone('America/Mexico_City').toISO(),
+      };
+
+      const { resource } = await this.container.items.upsert(updatedDoc);
+      return !!resource;
+    } catch (e) {
+      console.warn('renameConversation error:', e?.message);
+      return false;
+    }
+  }
+
+  /** 📊 Actualizar metadata de conversación */
+  async updateConversationMetadata(conversationId, metadata, token) {
+    try {
+      if (!this.cosmosAvailable || !token) return false;
+
+      const docId = `conversation_${conversationId}`;
+      
+      let existingDoc = null;
+      try {
+        const { resource } = await this.container.item(docId, token).read();
+        existingDoc = resource;
+      } catch (e) {
+        if (e.code === 404) return false;
+        throw e;
+      }
+
+      const updatedDoc = {
+        ...existingDoc,
+        ...metadata,
+        lastActivity: DateTime.now().setZone('America/Mexico_City').toISO(),
+      };
+
+      const { resource } = await this.container.items.upsert(updatedDoc);
+      return !!resource;
+    } catch (e) {
+      console.warn('updateConversationMetadata error:', e?.message);
+      return false;
+    }
+  }
+
+  /** 📈 getStats: estadísticas del servicio */
   async getStats() {
     try {
       if (!this.cosmosAvailable) {
@@ -855,7 +857,7 @@ export default class CosmosService {
         },
         conversationMessagesFormat: conversationMessagesStats.conversationMessagesFormat || null,
         timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
-        version: '2.1.3-ConversationFormat',
+        version: '2.2.0-TokenBased',
       };
     } catch (error) {
       console.error('❌ Error getStats:', error);

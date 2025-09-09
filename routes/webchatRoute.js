@@ -10,13 +10,12 @@ router.post('/ask', WebchatController.ask);
 router.get('/history', WebchatController.history);
 router.get('/stream', WebchatController.stream);
 
-// NUEVO: borrar conversación actual
+// Limpiar conversación actual (borra mensajes pero mantiene la conversación)
 router.post('/clear', WebchatController.clear);
 
-// NUEVO: multi-chat estilo ChatGPT
-router.get('/conversations', WebchatController.conversations);           // listar
+// Multi-chat estilo ChatGPT (sin eliminación)
+router.get('/conversations', WebchatController.conversations);           // listar por token
 router.patch('/conversation/:id', WebchatController.renameConversation); // renombrar
-router.delete('/conversation/:id', WebchatController.deleteConversation);// eliminar
 
 // Opcional: health/status del stack
 router.get('/status', WebchatController.status);

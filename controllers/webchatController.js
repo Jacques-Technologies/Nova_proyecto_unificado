@@ -30,12 +30,9 @@ export async function init(req, res) {
     const CveUsuario = req.query.CveUsuario || req.body?.CveUsuario || null;
     const NumRI      = req.query.NumRI      || req.body?.NumRI      || null;
 
-    console.log(`📝 WebChat INIT - CveUsuario: ${CveUsuario}, NumRI: ${NumRI}`);
+    console.log(`📝 WebChat INIT - Token: ${token?.substring(0, 8)}..., CveUsuario: ${CveUsuario}, NumRI: ${NumRI}`);
 
     if (!token) return res.status(400).json({ success: false, message: 'token requerido' });
-
-    // ⚠️ Owner para la partición
-    const ownerUserId = CveUsuario || 'anonymous';
 
     // Crear conversación
     let conversationId;
@@ -44,7 +41,7 @@ export async function init(req, res) {
         const conv = await cosmos.createOrGetConversation({
           channel: 'web',
           token,
-          metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario: ownerUserId, NumRI }
+          metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI }
         });
         conversationId = conv?.id;
       }
@@ -56,7 +53,7 @@ export async function init(req, res) {
       conversationId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     }
 
-    // Guardar saludo inicial (no bloqueante) con owner correcto
+    // Guardar saludo inicial (no bloqueante)
     try {
       if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(conversationId, {
@@ -64,8 +61,8 @@ export async function init(req, res) {
           content: INITIAL_MESSAGE,
           ts: DateTime.utc().toISO(),
           channel: 'web',
-          userId: ownerUserId,
-          metadata: { token, CveUsuario: ownerUserId, NumRI }
+          token: token,
+          metadata: { token, CveUsuario, NumRI }
         });
       }
     } catch (error) {
@@ -89,14 +86,14 @@ export async function init(req, res) {
 /* ============================================================
    ASK: procesar un mensaje del usuario
    POST /api/webchat/ask
-   body: { token, conversationId, content, CveUsuario?, NumRI?, userId?, metadata? }
+   body: { token, conversationId, content, CveUsuario?, NumRI?, metadata? }
 ============================================================ */
 export async function ask(req, res) {
   try {
-    const { content, conversationId, userId, metadata } = req.body || {};
+    const { content, conversationId, metadata } = req.body || {};
     const { token, CveUsuario, NumRI } = req.body || {};
 
-    console.log(`📝 WebChat ASK - User: ${CveUsuario}, Msg: "${content?.substring(0, 50)}..."`);
+    console.log(`📝 WebChat ASK - Token: ${token?.substring(0, 8)}..., Msg: "${content?.substring(0, 50)}..."`);
 
     if (!token || !conversationId || !content) {
       return res.status(400).json({
@@ -115,10 +112,10 @@ export async function ask(req, res) {
         await cosmos.appendMessage(conversationId, {
           role: 'user',
           content,
-          userId: userId || CveUsuario || null,
           metadata: { ...(metadata || {}), token, CveUsuario, NumRI },
           ts: DateTime.utc().toISO(),
-          channel: 'web'
+          channel: 'web',
+          token: token
         });
       }
     } catch (error) {
@@ -126,13 +123,13 @@ export async function ask(req, res) {
     }
 
     // Info de usuario para AI
-    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario}`, token };
+    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
 
-    // Historial (deja que Cosmos resuelva owner)
+    // Historial usando token
     let historial = [];
     try {
       if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-        historial = await cosmos.getConversationForOpenAI(conversationId, null) || [];
+        historial = await cosmos.getConversationForOpenAI(conversationId, token) || [];
         historial = historial.slice(-10);
       }
     } catch (error) {
@@ -174,6 +171,7 @@ export async function ask(req, res) {
           citations: citations || [],
           ts: DateTime.utc().toISO(),
           channel: 'web',
+          token: token,
           metadata: { token, CveUsuario, NumRI, toolsUsed: response?.metadata?.toolsUsed || null }
         });
       }
@@ -207,17 +205,27 @@ export async function ask(req, res) {
 
 /* ============================================================
    HISTORY
-   GET /api/webchat/history?conversationId=...&limit=30&before=...
+   GET /api/webchat/history?conversationId=...&token=...&limit=30&before=...
 ============================================================ */
 export async function history(req, res) {
   try {
-    const { conversationId, limit = 30, before } = req.query;
-    if (!conversationId) return res.status(400).json({ success: false, message: 'conversationId requerido' });
+    const { conversationId, token, limit = 30, before } = req.query;
+    
+    if (!conversationId || !token) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'conversationId y token requeridos' 
+      });
+    }
 
     let items = [];
     try {
       if (cosmosAvailable() && isFn(cosmos, 'getMessages')) {
-        items = await cosmos.getMessages(conversationId, { limit: Number(limit), before: before || null }) || [];
+        items = await cosmos.getMessages(conversationId, { 
+          token, 
+          limit: Number(limit), 
+          before: before || null 
+        }) || [];
       }
     } catch (error) {
       console.warn('Error obteniendo historial:', error.message);
@@ -241,7 +249,7 @@ export async function stream(req, res) {
     const CveUsuario     = req.query.CveUsuario     || req.body?.CveUsuario || null;
     const NumRI          = req.query.NumRI          || req.body?.NumRI      || null;
 
-    console.log(`📝 WebChat STREAM - User: ${CveUsuario}`);
+    console.log(`📝 WebChat STREAM - Token: ${token?.substring(0, 8)}...`);
 
     if (!token || !conversationId || !content) {
       res.status(400).end();
@@ -263,23 +271,23 @@ export async function stream(req, res) {
           content,
           ts: DateTime.utc().toISO(),
           channel: 'web',
-          userId: CveUsuario || null,
+          token: token,
           metadata: { token, CveUsuario, NumRI }
         });
       }
 
-      // Historial para IA
+      // Historial para IA usando token
       let historial = [];
       try {
         if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-          historial = await cosmos.getConversationForOpenAI(conversationId, null) || [];
+          historial = await cosmos.getConversationForOpenAI(conversationId, token) || [];
           historial = historial.slice(-10);
         }
       } catch (error) {
         console.warn('Error obteniendo historial para stream:', error.message);
       }
 
-      const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario}`, token };
+      const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
 
       // Procesar con IA (no streaming nativo)
       const response = await ai.procesarMensaje(content, historial, token, userInfo, conversationId);
@@ -306,6 +314,7 @@ export async function stream(req, res) {
             content: replyText,
             ts: DateTime.utc().toISO(),
             channel: 'web',
+            token: token,
             metadata: { token, CveUsuario, NumRI }
           });
         }
@@ -362,7 +371,7 @@ export async function clear(req, res) {
 
     if (isFn(cosmos, 'clearConversation')) {
       try {
-        const ok = await cosmos.clearConversation(conversationId);
+        const ok = await cosmos.clearConversation(conversationId, token);
         if (ok) return res.json({ success: true, cleared: true });
       } catch (e) {
         console.warn('clearConversation error:', e?.message);
@@ -377,6 +386,7 @@ export async function clear(req, res) {
           content: '[Conversación reiniciada por el usuario]',
           ts: DateTime.utc().toISO(),
           channel: 'web',
+          token: token,
           metadata: { token, clearedBy: 'user' }
         });
       }
@@ -393,24 +403,21 @@ export async function clear(req, res) {
 
 /* ============================================================
    LISTAR CONVERSACIONES
-   GET /api/webchat/conversations?token=...&CveUsuario=...&limit=50
+   GET /api/webchat/conversations?token=...&limit=50
 ============================================================ */
 export async function conversations(req, res) {
   try {
-    const token      = req.query.token      || req.body?.token;
-    const CveUsuario = req.query.CveUsuario || req.body?.CveUsuario;
-    const limit      = Math.min(Number(req.query.limit || 50), 100);
+    const token = req.query.token || req.body?.token;
+    const limit = Math.min(Number(req.query.limit || 50), 100);
 
-    if (!token || !CveUsuario) {
-      return res.status(400).json({ success: false, message: 'token y CveUsuario requeridos' });
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
     }
 
     let items = [];
     try {
       if (isFn(cosmos, 'listConversations')) {
-        items = await cosmos.listConversations({ owner: CveUsuario, channel: 'web', limit });
-      } else if (isFn(cosmos, 'getUserConversations')) {
-        items = await cosmos.getUserConversations(CveUsuario, { limit, channel: 'web' });
+        items = await cosmos.listConversations({ token, limit });
       } else {
         items = [];
       }
@@ -423,7 +430,7 @@ export async function conversations(req, res) {
       id: it.id || it.conversationId,
       title: it.title || it.metadata?.title || 'Nuevo chat',
       createdAt: it.createdAt || it.ts || it._ts || null,
-      lastMessageAt: it.lastMessageAt || it.updatedAt || null,
+      lastMessageAt: it.lastActivity || it.lastMessageAt || it.updatedAt || null,
       channel: it.channel || 'web',
     }));
 
@@ -441,7 +448,7 @@ export async function conversations(req, res) {
 export async function renameConversation(req, res) {
   try {
     const id = req.params.id;
-    const { token, CveUsuario, title } = req.body || {};
+    const { token, title } = req.body || {};
     if (!token || !id || !title) {
       return res.status(400).json({ success: false, message: 'token, id y title requeridos' });
     }
@@ -449,17 +456,18 @@ export async function renameConversation(req, res) {
     let ok = false;
     try {
       if (isFn(cosmos, 'renameConversation')) {
-        ok = await cosmos.renameConversation(id, title, { by: CveUsuario });
+        ok = await cosmos.renameConversation(id, title, { token });
       } else if (isFn(cosmos, 'updateConversationMetadata')) {
-        const meta = { title, renamedBy: CveUsuario || 'user', renamedAt: DateTime.utc().toISO() };
-        ok = await cosmos.updateConversationMetadata(id, meta);
+        const meta = { title, renamedAt: DateTime.utc().toISO() };
+        ok = await cosmos.updateConversationMetadata(id, meta, token);
       } else if (isFn(cosmos, 'appendMessage')) {
         await cosmos.appendMessage(id, {
           role: 'system',
           content: `[Título actualizado a: ${title}]`,
           ts: DateTime.utc().toISO(),
           channel: 'web',
-          metadata: { token, CveUsuario, title }
+          token: token,
+          metadata: { token, title }
         });
         ok = true;
       }
@@ -473,44 +481,5 @@ export async function renameConversation(req, res) {
   } catch (err) {
     console.error('renameConversation error:', err);
     return res.status(500).json({ success: false, message: 'Error renombrando conversación' });
-  }
-}
-
-/* ============================================================
-   ELIMINAR
-   DELETE /api/webchat/conversation/:id
-============================================================ */
-export async function deleteConversation(req, res) {
-  try {
-    const id = req.params.id;
-    const { token, CveUsuario } = req.body || {};
-    if (!token || !id) return res.status(400).json({ success: false, message: 'token e id requeridos' });
-
-    let ok = false;
-    try {
-      if (isFn(cosmos, 'deleteConversation')) {
-        ok = await cosmos.deleteConversation(id, { by: CveUsuario });
-      } else if (isFn(cosmos, 'softDeleteConversation')) {
-        ok = await cosmos.softDeleteConversation(id, { by: CveUsuario });
-      } else if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(id, {
-          role: 'system',
-          content: '[Conversación archivada]',
-          ts: DateTime.utc().toISO(),
-          channel: 'web',
-          metadata: { token, CveUsuario, archived: true }
-        });
-        ok = true;
-      }
-    } catch (e) {
-      console.warn('deleteConversation error:', e?.message);
-      ok = false;
-    }
-
-    if (!ok) return res.status(500).json({ success: false, message: 'No se pudo eliminar' });
-    return res.json({ success: true, deleted: true });
-  } catch (err) {
-    console.error('deleteConversation outer error:', err);
-    return res.status(500).json({ success: false, message: 'Error eliminando conversación' });
   }
 }
