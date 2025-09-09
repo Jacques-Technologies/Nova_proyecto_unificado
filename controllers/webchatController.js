@@ -223,34 +223,30 @@ export async function ask(req, res) {
    GET /api/webchat/history?token=...&limit=30&before=...&conversationId?=...
    🔁 Si no envían conversationId, lee por TOKEN (última conversación activa)
 ============================================================ */
-export async function history(req, res) {
-  try {
-    const { token, limit = 30, before } = req.query;
-    
-    if (!token) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'token requerido' 
-      });
-    }
+    export async function history(req, res) {
+      try {
+        const { token, limit = 30, before } = req.query;
+        
+        if (!token) {
+          return res.status(400).json({ 
+            success: false, 
+            message: 'token requerido' 
+          });
+        }
 
-    let items = [];
-    try {
-      if (isFn(cosmos, 'getConversationHistoryByToken')) {
-        items = await cosmos.getConversationHistoryByToken(token, Number(limit));
-      } else {
-        items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before: before || null }) || [];
+        let items;
+        try {
+          items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before: before || null }) || [];
+        } catch (error) {
+          console.warn('Error obteniendo historial por token:', error.message);
+          items = [];
+        }
+        return res.json({ success: true, items });
+      } catch (err) {
+        console.error('history error:', err);
+        return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
       }
-    } catch (error) {
-      console.warn('Error obteniendo historial por token:', error.message);
-      items = [];
     }
-    return res.json({ success: true, items });
-  } catch (err) {
-    console.error('history error:', err);
-    return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
-  }
-}
 
 
 /* ============================================================
