@@ -32,13 +32,7 @@ async function startServer() {
   // ✅ CORS configurado correctamente para producción
   app.use(cors({
     origin: [
-      'https://frontendnova.onrender.com',  // Tu frontend en producción
-      'http://localhost:3000',               // Desarrollo local
-      'http://localhost:5000',               // Desarrollo local
-      'http://localhost:8080',               // Desarrollo local
-      'http://127.0.0.1:3000',              // Desarrollo local
-      'http://127.0.0.1:5000',              // Desarrollo local
-      'http://127.0.0.1:8080'               // Desarrollo local
+      'https://frontendnova.onrender.com'  // Tu frontend en producción
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
