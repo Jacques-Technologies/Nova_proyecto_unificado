@@ -234,9 +234,13 @@ export async function history(req, res) {
       });
     }
 
-    let items;
+    let items = [];
     try {
-      items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before: before || null }) || [];
+      if (isFn(cosmos, 'getConversationHistoryByToken')) {
+        items = await cosmos.getConversationHistoryByToken(token, Number(limit));
+      } else {
+        items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before: before || null }) || [];
+      }
     } catch (error) {
       console.warn('Error obteniendo historial por token:', error.message);
       items = [];
