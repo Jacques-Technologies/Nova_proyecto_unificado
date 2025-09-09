@@ -562,12 +562,18 @@ export default class CosmosService {
   }
 
   /** 📜 Obtener mensajes por token (conversación más reciente) */
-  /** 📜 Obtener mensajes directamente por token (sin depender de conversationId) */
+/** 📜 Obtener mensajes directamente por token - VERSIÓN MEJORADA */
 async getMessagesByToken(token, { limit = 30, before = null } = {}) {
   try {
-    if (!token) return [];
+    console.log(`🔍 getMessagesByToken - Token: ${token?.substring(0, 8)}..., Limit: ${limit}`);
+    
+    if (!token) {
+      console.warn('⚠️ getMessagesByToken: token requerido');
+      return [];
+    }
 
     if (!this.cosmosAvailable) {
+      console.log('💾 Usando memoria fallback');
       // 🔁 Fallback en memoria
       const bucket = this._memEnsure(token);
       const allMessages = [];
@@ -576,7 +582,9 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
       }
       let list = allMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
       if (before) list = list.filter(m => m.timestamp < before);
-      return list.slice(-limit).map(m => ({ role: m.role, content: m.content, ts: m.timestamp }));
+      const result = list.slice(-limit).map(m => ({ role: m.role, content: m.content, ts: m.timestamp }));
+      console.log(`💾 Memoria: ${result.length} mensajes encontrados`);
+      return result;
     }
 
     // 🔎 Cosmos: traer todos los mensajes por token
@@ -585,29 +593,121 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
       FROM c
       WHERE c.userToken = @token
         AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
-      ORDER BY c.timestamp ASC
+        AND IS_DEFINED(c.message)
+        AND c.message != ''
     `;
 
     const params = [{ name: '@token', value: token }];
+    
     if (before) {
-      queryText += ` AND c.timestamp < @before `;
+      queryText += ` AND c.timestamp < @before`;
       params.push({ name: '@before', value: before });
     }
+
+    queryText += ` ORDER BY c.timestamp ASC`;
+
+    console.log(`🔍 Ejecutando query Cosmos con ${params.length} parámetros`);
 
     const { resources } = await this.container.items
       .query({ query: queryText, parameters: params }, { partitionKey: token })
       .fetchAll();
 
-    return (resources || [])
-      .map((it) => ({
-        role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
-        content: it.message,
-        ts: it.timestamp,
+    console.log(`📊 Cosmos query result: ${resources?.length || 0} items`);
+
+    const result = (resources || [])
+      .filter(item => item.message && item.message.trim() !== '') // Filtrar mensajes vacíos
+      .map((item) => ({
+        role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+        content: item.message,
+        ts: item.timestamp,
       }))
       .slice(-limit);
+
+    console.log(`✅ getMessagesByToken resultado final: ${result.length} mensajes`);
+    return result;
+
   } catch (e) {
-    console.warn('getMessagesByToken error:', e?.message);
+    console.error('❌ getMessagesByToken error:', e);
+    console.error('❌ Error details:', {
+      message: e.message,
+      code: e.code,
+      statusCode: e.statusCode
+    });
     return [];
+  }
+}
+
+/** 📜 Método alternativo: getConversationHistoryByToken mejorado */
+async getConversationHistoryByToken(token, limit = 20) {
+  try {
+    console.log(`🔍 getConversationHistoryByToken - Token: ${token?.substring(0, 8)}..., Limit: ${limit}`);
+    
+    if (!token) return [];
+
+    // Primero intentar obtener la conversación más reciente
+    const convId = await this.getLatestConversationId(token);
+    console.log(`🎯 Latest conversationId: ${convId}`);
+    
+    if (!convId) {
+      console.log('⚠️ No se encontró conversación activa');
+      return [];
+    }
+
+    const result = await this.getConversationHistory(convId, token, limit);
+    console.log(`✅ getConversationHistoryByToken resultado: ${result?.length || 0} mensajes`);
+    
+    return result || [];
+  } catch (e) {
+    console.error('❌ getConversationHistoryByToken error:', e);
+    return [];
+  }
+}
+
+/** 🔍 Método de diagnóstico para verificar datos en Cosmos */
+async debugTokenData(token) {
+  if (!this.cosmosAvailable) {
+    return { error: 'Cosmos no disponible', memoryData: this.memory.has(token) };
+  }
+
+  try {
+    // Query básico para ver qué hay en la base de datos para este token
+    const basicQuery = {
+      query: `
+        SELECT TOP 10 c.id, c.documentType, c.messageType, c.conversationId, c.timestamp
+        FROM c
+        WHERE c.userToken = @token
+        ORDER BY c.timestamp DESC
+      `,
+      parameters: [{ name: '@token', value: token }]
+    };
+
+    const { resources } = await this.container.items
+      .query(basicQuery, { partitionKey: token })
+      .fetchAll();
+
+    const summary = {
+      totalDocuments: resources.length,
+      documentTypes: {},
+      messageTypes: {},
+      conversations: new Set(),
+      sample: resources.slice(0, 3)
+    };
+
+    resources.forEach(doc => {
+      summary.documentTypes[doc.documentType] = (summary.documentTypes[doc.documentType] || 0) + 1;
+      if (doc.messageType) {
+        summary.messageTypes[doc.messageType] = (summary.messageTypes[doc.messageType] || 0) + 1;
+      }
+      if (doc.conversationId) {
+        summary.conversations.add(doc.conversationId);
+      }
+    });
+
+    summary.conversations = Array.from(summary.conversations);
+
+    return summary;
+  } catch (error) {
+    return { error: error.message };
   }
 }
 

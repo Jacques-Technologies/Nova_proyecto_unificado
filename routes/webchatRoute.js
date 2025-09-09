@@ -23,4 +23,7 @@ router.patch('/conversation/:id', webchatController.renameConversation);
 // ➕ resumen
 router.get('/summary', webchatController.summary);
 
+// ➕ debug endpoints para diagnosticar problemas (SOLO TOKEN)
+router.get('/debug', webchatController.debugToken);
+
 export default router;

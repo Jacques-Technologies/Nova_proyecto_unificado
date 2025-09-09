@@ -223,21 +223,234 @@ export async function ask(req, res) {
    GET /api/webchat/history?token=...&limit=30&before=...&conversationId?=...
    🔁 Si no envían conversationId, lee por TOKEN (última conversación activa)
 ============================================================ */
+/* ============================================================
+   HISTORY - VERSIÓN WEB (100% SOLO TOKEN)
+   GET /api/webchat/history?token=...&limit=30&before=...
+============================================================ */
 export async function history(req, res) {
   try {
-    const { token, limit = 30 } = req.query;
+    const { token, limit = 30, before } = req.query;
+    
+    console.log(`📝 WebChat HISTORY (TOKEN-ONLY) - Token: ${token?.substring(0, 8)}..., Limit: ${limit}`);
+    
     if (!token) {
       return res.status(400).json({ success: false, message: 'token requerido' });
     }
-    const convId = await cosmos.getLatestConversationId(token);
-    const items = await cosmos.getConversationHistory(convId, token, Number(limit));
-    return res.json({ success: true, items });
+
+    let items = [];
+    let method = 'none';
+    let error = null;
+
+    try {
+      // 🎯 MÉTODO 1: getMessagesByToken (principal)
+      if (isFn(cosmos, 'getMessagesByToken')) {
+        console.log('🔍 Intentando getMessagesByToken...');
+        items = await cosmos.getMessagesByToken(token, { limit: Number(limit), before });
+        method = 'getMessagesByToken';
+        console.log(`📖 getMessagesByToken encontró: ${items?.length || 0} items`);
+      }
+
+      // 🎯 MÉTODO 2: Query directo a Cosmos (fallback)
+      if ((!items || items.length === 0) && cosmosAvailable()) {
+        console.log('🔍 Intentando query directo...');
+        try {
+          let queryText = `
+            SELECT c.message, c.messageType, c.timestamp, c.conversationId
+            FROM c
+            WHERE c.userToken = @token
+              AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+              AND IS_DEFINED(c.message)
+              AND c.message != ''
+          `;
+
+          const params = [{ name: '@token', value: token }];
+          
+          if (before) {
+            queryText += ` AND c.timestamp < @before`;
+            params.push({ name: '@before', value: before });
+          }
+
+          queryText += ` ORDER BY c.timestamp DESC`;
+          queryText = `SELECT TOP ${Number(limit)} * FROM (${queryText}) ORDER BY timestamp ASC`;
+
+          const { resources } = await cosmos.container.items
+            .query({ query: queryText, parameters: params }, { partitionKey: token })
+            .fetchAll();
+
+          items = (resources || []).map(item => ({
+            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+            content: item.message,
+            ts: item.timestamp
+          }));
+          
+          method = 'directQuery';
+          console.log(`📖 Query directo encontró: ${items?.length || 0} items`);
+        } catch (directQueryError) {
+          console.error('❌ Error en query directo:', directQueryError);
+          error = directQueryError.message;
+        }
+      }
+
+      // 🎯 MÉTODO 3: Fallback en memoria (si Cosmos no está disponible)
+      if ((!items || items.length === 0) && !cosmosAvailable()) {
+        console.log('🔍 Usando fallback en memoria...');
+        // Simular datos en memoria para pruebas
+        items = [];
+        method = 'memory';
+      }
+
+    } catch (methodError) {
+      console.error('❌ Error en métodos de obtención:', methodError);
+      error = methodError.message;
+      items = [];
+    }
+
+    // Normalizar respuesta
+    const normalizedItems = (items || []).map((item, index) => ({
+      id: `${token}_${Date.now()}_${index}`,
+      message: item.content || item.message,
+      type: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
+      messageType: item.role === 'assistant' ? 'bot' : (item.role === 'system' ? 'system' : 'user'),
+      timestamp: item.ts || item.timestamp,
+      userToken: token,
+      userName: 'Usuario'
+    }));
+
+    console.log(`✅ HISTORY FINAL: ${normalizedItems.length} items, método: ${method}`);
+
+    return res.json({ 
+      success: true, 
+      items: normalizedItems,
+      debug: {
+        method,
+        tokenProvided: !!token,
+        cosmosAvailable: cosmosAvailable(),
+        itemsFound: normalizedItems.length,
+        error: error,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
   } catch (err) {
-    console.error('history error:', err);
-    return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
+    console.error('❌ HISTORY error general:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error obteniendo historial',
+      error: err.message,
+      debug: {
+        tokenProvided: !!req.query?.token,
+        cosmosAvailable: cosmosAvailable(),
+        timestamp: new Date().toISOString()
+      }
+    });
   }
 }
 
+/* ============================================================
+   DEBUG TOKEN - Diagnóstico completo por token
+============================================================ */
+export async function debugToken(req, res) {
+  try {
+    const { token } = req.query;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
+    }
+
+    console.log(`🔍 DEBUG TOKEN: ${token.substring(0, 8)}...`);
+
+    const debug = {
+      token: token.substring(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+      cosmosAvailable: cosmosAvailable(),
+      cosmosConfig: null,
+      methods: {},
+      data: {
+        totalMessages: 0,
+        messageTypes: {},
+        conversations: [],
+        sampleMessages: [],
+        rawCosmosData: null
+      },
+      tests: {}
+    };
+
+    // Verificar configuración de Cosmos
+    if (isFn(cosmos, 'getConfigInfo')) {
+      debug.cosmosConfig = cosmos.getConfigInfo();
+    }
+
+    // Verificar métodos disponibles
+    debug.methods.getMessagesByToken = isFn(cosmos, 'getMessagesByToken');
+    debug.methods.debugTokenData = isFn(cosmos, 'debugTokenData');
+    debug.methods.container = !!cosmos.container;
+
+    if (cosmosAvailable()) {
+      try {
+        // Test 1: Usar debugTokenData si existe
+        if (isFn(cosmos, 'debugTokenData')) {
+          console.log('🔍 Ejecutando debugTokenData...');
+          debug.data.rawCosmosData = await cosmos.debugTokenData(token);
+        }
+
+        // Test 2: getMessagesByToken
+        if (isFn(cosmos, 'getMessagesByToken')) {
+          console.log('🔍 Ejecutando getMessagesByToken...');
+          const messages = await cosmos.getMessagesByToken(token, { limit: 50 });
+          debug.data.totalMessages = messages?.length || 0;
+          debug.data.sampleMessages = (messages || []).slice(0, 3);
+          
+          // Contar tipos de mensaje
+          (messages || []).forEach(msg => {
+            debug.data.messageTypes[msg.role] = (debug.data.messageTypes[msg.role] || 0) + 1;
+          });
+
+          debug.tests.getMessagesByToken = {
+            success: true,
+            count: messages?.length || 0
+          };
+        }
+
+        // Test 3: Query directo básico
+        console.log('🔍 Ejecutando query directo básico...');
+        const basicQuery = {
+          query: `SELECT TOP 10 c.id, c.documentType, c.messageType FROM c WHERE c.userToken = @token`,
+          parameters: [{ name: '@token', value: token }]
+        };
+
+        const { resources } = await cosmos.container.items
+          .query(basicQuery, { partitionKey: token })
+          .fetchAll();
+
+        debug.tests.directQuery = {
+          success: true,
+          count: resources?.length || 0,
+          sample: resources?.slice(0, 3) || []
+        };
+
+      } catch (debugError) {
+        console.error('❌ Error en debug:', debugError);
+        debug.error = {
+          message: debugError.message,
+          code: debugError.code,
+          statusCode: debugError.statusCode
+        };
+      }
+    } else {
+      debug.error = 'Cosmos DB no está disponible';
+    }
+
+    return res.json({ success: true, debug });
+    
+  } catch (err) {
+    console.error('❌ debugToken error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error en debug',
+      error: err.message
+    });
+  }
+}
 
 /* ============================================================
    STREAM (SSE simulado)
