@@ -1,9 +1,10 @@
-// services/cosmosService.js - MEJORADO: Historial + Formato de Conversación
+// services/cosmosService.js - FIXED VERSION
 import {CosmosClient} from '@azure/cosmos';
 import {DateTime} from 'luxon';
 import 'dotenv/config';
+
 /**
- * Servicio de Cosmos DB MEJORADO - Historial funcionando + Formato de conversación
+ * Servicio de Cosmos DB CORREGIDO - Sin duplicados ni conflictos
  */
 export default class CosmosService {
     constructor() {
@@ -64,7 +65,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Guardar conversación en formato de mensajes con roles
+     * ✅ Guardar conversación en formato de mensajes con roles
      */
     async saveConversationMessages(conversationId, userId, messages, userInfo = null) {
         try {
@@ -81,7 +82,6 @@ export default class CosmosService {
             const conversationDocId = `conversation_messages_${conversationId}`;
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
-            // ✅ FORMATO: Array de mensajes con roles (system, user, assistant)
             const conversationDoc = {
                 id: conversationDocId,
                 conversationId: conversationId,
@@ -101,7 +101,6 @@ export default class CosmosService {
             console.log(`💾 [${userId}] Guardando conversación en formato de mensajes: ${messages.length} mensajes`);
             console.log(`🔍 [${userId}] Documento ID: ${conversationDocId}`);
 
-            // ✅ USAR UPSERT: Actualizar o crear
             const { resource: savedDoc } = await this.container.items.upsert(conversationDoc);
             
             console.log(`✅ [${userId}] Conversación en formato de mensajes guardada exitosamente`);
@@ -119,7 +118,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Obtener conversación en formato de mensajes
+     * ✅ Obtener conversación en formato de mensajes
      */
     async getConversationMessages(conversationId, userId) {
         try {
@@ -156,7 +155,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Agregar mensaje a conversación en formato de roles
+     * ✅ Agregar mensaje a conversación en formato de roles
      */
     async addMessageToConversation(conversationId, userId, role, content, userInfo = null) {
         try {
@@ -177,7 +176,7 @@ export default class CosmosService {
             // Obtener conversación actual
             let currentMessages = await this.getConversationMessages(conversationId, userId);
 
-            // ✅ AGREGAR: Nuevo mensaje al array
+            // Agregar nuevo mensaje al array
             const newMessage = {
                 role: role,
                 content: content,
@@ -186,7 +185,7 @@ export default class CosmosService {
 
             currentMessages.push(newMessage);
 
-            // ✅ MANTENER: Solo los últimos 20 mensajes para no llenar demasiado
+            // Mantener solo los últimos 20 mensajes para no llenar demasiado
             if (currentMessages.length > 20) {
                 currentMessages = currentMessages.slice(-20);
             }
@@ -204,7 +203,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Obtener conversación en formato OpenAI (listo para usar)
+     * ✅ Obtener conversación en formato OpenAI (listo para usar)
      */
     async getConversationForOpenAI(conversationId, userId, includeSystem = true) {
         try {
@@ -235,7 +234,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ MEJORADO: saveMessage ahora también actualiza la conversación en formato de mensajes
+     * ✅ CORREGIDO: saveMessage ahora también actualiza la conversación en formato de mensajes
      */
     async saveMessage(message, conversationId, userId, userName = null, messageType = 'user') {
         try {
@@ -244,7 +243,6 @@ export default class CosmosService {
                 return null;
             }
 
-            // ✅ VALIDACIÓN: Parámetros requeridos
             if (!message || !conversationId || !userId) {
                 console.error('❌ saveMessage: Parámetros requeridos faltantes', {
                     hasMessage: !!message,
@@ -257,7 +255,7 @@ export default class CosmosService {
             const messageId = this.generateMessageId();
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
-            // ✅ ESTRUCTURA: Mensaje individual (mantener funcionalidad existente)
+            // Estructura: Mensaje individual (mantener funcionalidad existente)
             const messageDoc = {
                 id: messageId,
                 messageId: messageId,
@@ -282,7 +280,7 @@ export default class CosmosService {
             
             console.log(`✅ [${userId}] Mensaje individual guardado: ${messageId}`);
 
-            // ✅ NUEVO: También agregar a conversación en formato de mensajes
+            // También agregar a conversación en formato de mensajes
             try {
                 const role = messageType === 'bot' ? 'assistant' : 
                            messageType === 'system' ? 'system' : 'user';
@@ -302,7 +300,7 @@ export default class CosmosService {
                 // No fallar si esto no funciona
             }
             
-            // ✅ ACTUALIZAR: Actividad de conversación después de guardar mensaje
+            // Actualizar actividad de conversación después de guardar mensaje
             setImmediate(() => {
                 this.updateConversationActivity(conversationId, userId).catch(error => {
                     console.warn(`⚠️ [${userId}] Error actualizando actividad:`, error.message);
@@ -324,7 +322,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Limpiar conversación en formato de mensajes
+     * ✅ Limpiar conversación en formato de mensajes
      */
     async cleanConversationMessages(conversationId, userId) {
         try {
@@ -353,7 +351,7 @@ export default class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Obtener estadísticas de conversaciones en formato de mensajes
+     * ✅ Obtener estadísticas de conversaciones en formato de mensajes
      */
     async getConversationMessagesStats() {
         try {
@@ -396,10 +394,8 @@ export default class CosmosService {
         }
     }
 
-    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
-    
     /**
-     * ✅ COMPLETAMENTE CORREGIDO: Obtener historial de conversación desde Cosmos DB
+     * ✅ Obtener historial de conversación desde Cosmos DB
      */
     async getConversationHistory(conversationId, userId, limit = 20) {
         try {
@@ -413,7 +409,7 @@ export default class CosmosService {
             console.log(`🔍 [${userId}] UserId: ${userId}`);
             console.log(`🔍 [${userId}] Límite: ${limit}`);
 
-            // ✅ INTENTO 1: Query principal simplificada
+            // Query principal simplificada
             const mainQuery = {
                 query: `
                     SELECT *
@@ -444,7 +440,7 @@ export default class CosmosService {
                 console.warn(`⚠️ [${userId}] Error en query principal:`, queryError.message);
             }
 
-            // ✅ INTENTO 2: Si no se encontraron mensajes, probar query más amplia
+            // Si no se encontraron mensajes, probar query más amplia
             if (messages.length === 0) {
                 console.log(`🔍 [${userId}] No se encontraron mensajes con query principal. Intentando query amplia...`);
                 
@@ -478,7 +474,7 @@ export default class CosmosService {
                 }
             }
 
-            // ✅ FORMATEAR mensajes encontrados
+            // Formatear mensajes encontrados
             if (messages.length === 0) {
                 console.log(`⚠️ [${userId}] No se encontraron mensajes después de todos los intentos`);
                 return [];
@@ -486,7 +482,7 @@ export default class CosmosService {
 
             console.log(`📝 [${userId}] Formateando ${messages.length} mensajes encontrados...`);
 
-            // ✅ FORMATEAR mensajes para el formato esperado
+            // Formatear mensajes para el formato esperado
             const sortedMessages = messages
                 .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) // Ordenar por timestamp
                 .slice(-limit) // Tomar solo los últimos 'limit' mensajes
@@ -498,7 +494,7 @@ export default class CosmosService {
                         userId: msg.userId,
                         userName: msg.userName || 'Usuario',
                         timestamp: msg.timestamp,
-                        type: msg.messageType === 'bot' ? 'assistant' : 'user', // ✅ Mapear correctamente
+                        type: msg.messageType === 'bot' ? 'assistant' : 'user', // Mapear correctamente
                         messageType: msg.messageType
                     };
                     
@@ -532,7 +528,6 @@ export default class CosmosService {
                 return null;
             }
 
-            // ✅ VALIDACIÓN: Parámetros requeridos
             if (!conversationId || !userId) {
                 console.error('❌ saveConversationInfo: conversationId o userId faltante');
                 return null;
@@ -559,7 +554,6 @@ export default class CosmosService {
 
             console.log(`💾 [${userId}] Guardando info de conversación: ${conversationDocId}`);
 
-            // ✅ USAR UPSERT: Siempre funciona, sea crear o actualizar
             const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
             
             console.log(`✅ [${userId}] Info de conversación guardada exitosamente`);
@@ -581,121 +575,113 @@ export default class CosmosService {
      */
     async getConversationInfo(conversationId, userId) {
         try {
-            if (!this.cosmosAvailable) {
-                return null;
-            }
+            if (!this.cosmosAvailable) return null;
 
             const conversationDocId = `conversation_${conversationId}`;
 
-            console.log(`📋 [${userId}] Obteniendo info de conversación: ${conversationId}`);
+            // Si conocemos la partitionKey, usa lectura directa
+            if (userId) {
+                const { resource: conversationDoc } = await this.container
+                    .item(conversationDocId, userId)
+                    .read();
+                return conversationDoc || null;
+            }
 
-            const { resource: conversationDoc } = await this.container
-                .item(conversationDocId, userId)
-                .read();
-
-            return conversationDoc;
+            // Si NO conocemos userId, buscar por query (cross-partition)
+            return await this.findConversationInfoAnyPartition(conversationId);
 
         } catch (error) {
-            if (error.code === 404) {
-                console.log(`ℹ️ [${userId}] Conversación no encontrada: ${conversationId}`);
-                return null;
-            }
-            
+            if (error.code === 404) return null;
             console.error(`❌ Error obteniendo info de conversación:`, error);
             return null;
         }
     }
 
     /**
-     * ✅ COMPLETAMENTE CORREGIDO: updateConversationActivity SIN errores de concurrencia
+     * ✅ CORREGIDO: updateConversationActivity SIN errores de concurrencia
      */
-    /**
- * ✅ FIXED: updateConversationActivity without duplicate keys
- */
-async updateConversationActivity(conversationId, userId) {
-    try {
-        if (!this.cosmosAvailable) {
-            console.log(`ℹ️ [${userId}] Cosmos DB no disponible - saltando actualización de actividad`);
-            return false;
-        }
-
-        // ✅ VALIDACIÓN: Parámetros requeridos
-        if (!conversationId || !userId) {
-            console.error('❌ updateConversationActivity: conversationId o userId faltante');
-            return false;
-        }
-
-        const conversationDocId = `conversation_${conversationId}`;
-        const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
-
-        console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
-
-        // ✅ SOLUCIÓN DEFINITIVA: SIEMPRE usar UPSERT
+    async updateConversationActivity(conversationId, userId) {
         try {
-            // Intentar leer el documento existente para preservar datos
-            let existingDoc = null;
-            try {
-                const { resource } = await this.container
-                    .item(conversationDocId, userId)
-                    .read();
-                existingDoc = resource;
-            } catch (readError) {
-                if (readError.code !== 404) {
-                    console.warn(`⚠️ [${userId}] Error leyendo documento existente (continuando):`, readError.message);
-                }
-            }
-
-            // ✅ CREAR DOCUMENTO ACTUALIZADO: Preservar datos existentes si los hay
-            const updatedDoc = {
-                id: conversationDocId,
-                conversationId: conversationId,
-                userId: userId,
-                userName: existingDoc?.userName || 'Usuario',
-                documentType: 'conversation_info',
-                createdAt: existingDoc?.createdAt || timestamp,
-                lastActivity: timestamp, // ✅ Actualizar timestamp
-                messageCount: (existingDoc?.messageCount || 0) + 1, // ✅ Incrementar contador
-                isActive: true,
-                partitionKey: userId,
-                ttl: 60 * 60 * 24 * 90,
-                version: '2.1.3',
-                // Preservar otros campos si existen (spread operator al final para evitar sobreescritura)
-                ...(existingDoc ? {
-                    ...existingDoc,
-                    // Sobrescribir solo los campos que queremos actualizar
-                    lastActivity: timestamp,
-                    messageCount: (existingDoc.messageCount || 0) + 1,
-                    isActive: true
-                } : {})
-            };
-
-            // ✅ UPSERT: Funciona SIEMPRE, sin importar si existe o no
-            const { resource: finalDoc } = await this.container.items.upsert(updatedDoc);
-            
-            if (!finalDoc) {
-                console.error(`❌ [${userId}] Upsert retornó documento null`);
+            if (!this.cosmosAvailable) {
+                console.log(`ℹ️ [${userId}] Cosmos DB no disponible - saltando actualización de actividad`);
                 return false;
             }
 
-            console.log(`✅ [${userId}] Actividad de conversación actualizada exitosamente`);
-            console.log(`📊 [${userId}] Mensajes totales: ${finalDoc.messageCount}, Última actividad: ${finalDoc.lastActivity}`);
-            
-            return true;
+            if (!conversationId || !userId) {
+                console.error('❌ updateConversationActivity: conversationId o userId faltante');
+                return false;
+            }
 
-        } catch (upsertError) {
-            console.error(`❌ [${userId}] Error en upsert:`, upsertError.message);
+            const conversationDocId = `conversation_${conversationId}`;
+            const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+
+            console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
+
+            try {
+                // Intentar leer el documento existente para preservar datos
+                let existingDoc = null;
+                try {
+                    const { resource } = await this.container
+                        .item(conversationDocId, userId)
+                        .read();
+                    existingDoc = resource;
+                } catch (readError) {
+                    if (readError.code !== 404) {
+                        console.warn(`⚠️ [${userId}] Error leyendo documento existente (continuando):`, readError.message);
+                    }
+                }
+
+                // Crear documento actualizado: Preservar datos existentes si los hay
+                const updatedDoc = {
+                    id: conversationDocId,
+                    conversationId: conversationId,
+                    userId: userId,
+                    userName: existingDoc?.userName || 'Usuario',
+                    documentType: 'conversation_info',
+                    createdAt: existingDoc?.createdAt || timestamp,
+                    lastActivity: timestamp, // Actualizar timestamp
+                    messageCount: (existingDoc?.messageCount || 0) + 1, // Incrementar contador
+                    isActive: true,
+                    partitionKey: userId,
+                    ttl: 60 * 60 * 24 * 90,
+                    version: '2.1.3',
+                    // Preservar otros campos si existen
+                    ...(existingDoc ? {
+                        ...existingDoc,
+                        // Sobrescribir solo los campos que queremos actualizar
+                        lastActivity: timestamp,
+                        messageCount: (existingDoc.messageCount || 0) + 1,
+                        isActive: true
+                    } : {})
+                };
+
+                // UPSERT: Funciona SIEMPRE, sin importar si existe o no
+                const { resource: finalDoc } = await this.container.items.upsert(updatedDoc);
+                
+                if (!finalDoc) {
+                    console.error(`❌ [${userId}] Upsert retornó documento null`);
+                    return false;
+                }
+
+                console.log(`✅ [${userId}] Actividad de conversación actualizada exitosamente`);
+                console.log(`📊 [${userId}] Mensajes totales: ${finalDoc.messageCount}, Última actividad: ${finalDoc.lastActivity}`);
+                
+                return true;
+
+            } catch (upsertError) {
+                console.error(`❌ [${userId}] Error en upsert:`, upsertError.message);
+                return false;
+            }
+
+        } catch (error) {
+            console.error(`❌ [${userId}] Error general en updateConversationActivity:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId
+            });
             return false;
         }
-
-    } catch (error) {
-        console.error(`❌ [${userId}] Error general en updateConversationActivity:`, {
-            error: error.message,
-            conversationId: conversationId,
-            userId: userId
-        });
-        return false;
     }
-}
 
     /**
      * Elimina mensajes antiguos de una conversación
@@ -757,59 +743,7 @@ async updateConversationActivity(conversationId, userId) {
     }
 
     /**
-     * Elimina una conversación completa
-     */
-    async deleteConversation(conversationId, userId) {
-        try {
-            if (!this.cosmosAvailable) {
-                return false;
-            }
-
-            console.log(`🗑️ [${userId}] Eliminando conversación completa: ${conversationId}`);
-
-            // Obtener todos los documentos de la conversación
-            const query = {
-                query: `
-                    SELECT c.id
-                    FROM c 
-                    WHERE c.conversationId = @conversationId 
-                    AND c.userId = @userId
-                `,
-                parameters: [
-                    { name: '@conversationId', value: conversationId },
-                    { name: '@userId', value: userId }
-                ]
-            };
-
-            const { resources: docs } = await this.container.items
-                .query(query, { partitionKey: userId })
-                .fetchAll();
-
-            let deletedCount = 0;
-
-            for (const doc of docs) {
-                try {
-                    await this.container.item(doc.id, userId).delete();
-                    deletedCount++;
-                } catch (error) {
-                    console.warn(`⚠️ Error eliminando documento ${doc.id}:`, error.message);
-                }
-            }
-
-            // ✅ TAMBIÉN ELIMINAR: Conversación en formato de mensajes
-            await this.cleanConversationMessages(conversationId, userId);
-
-            console.log(`✅ [${userId}] Conversación eliminada (${deletedCount} documentos)`);
-            return deletedCount > 0;
-
-        } catch (error) {
-            console.error(`❌ Error eliminando conversación:`, error);
-            return false;
-        }
-    }
-
-    /**
-     * ✅ MEJORADO: Obtiene estadísticas con información de conversaciones en formato de mensajes
+     * ✅ Obtiene estadísticas con información de conversaciones en formato de mensajes
      */
     async getStats() {
         try {
@@ -829,7 +763,7 @@ async updateConversationActivity(conversationId, userId) {
                 conversationMessagesFormat: 0
             };
 
-            // ✅ CONSULTAS MEJORADAS: Incluyendo conversaciones en formato de mensajes
+            // Consultas mejoradas: Incluyendo conversaciones en formato de mensajes
             const queries = [
                 {
                     label: 'totalDocuments',
@@ -885,7 +819,7 @@ async updateConversationActivity(conversationId, userId) {
                 console.warn('⚠️ Error obteniendo actividad reciente:', error.message);
             }
 
-            // ✅ OBTENER: Estadísticas de conversaciones en formato de mensajes
+            // Obtener estadísticas de conversaciones en formato de mensajes
             const conversationMessagesStats = await this.getConversationMessagesStats();
 
             return {
@@ -940,7 +874,7 @@ async updateConversationActivity(conversationId, userId) {
     }
 
     /**
-     * ✅ MEJORADO: Obtiene información de configuración con nuevas características
+     * ✅ Obtiene información de configuración con nuevas características
      */
     getConfigInfo() {
         return {
@@ -954,8 +888,8 @@ async updateConversationActivity(conversationId, userId) {
             features: {
                 individualMessages: true,
                 conversationHistory: true,
-                conversationMessagesFormat: true, // ✅ NUEVO
-                openaiCompatibleFormat: true,     // ✅ NUEVO
+                conversationMessagesFormat: true,
+                openaiCompatibleFormat: true,
                 autoTTL: true,
                 upsertOperations: true,
                 concurrencySafe: true
@@ -970,317 +904,420 @@ async updateConversationActivity(conversationId, userId) {
             ]
         };
     }
+
     /**
- * Crea (o recupera) una conversación info.
- * @param {{channel?: string, token?: string, metadata?: any}} opts
- * @returns {Promise<{id: string}>}
- */
-async createOrGetConversation(opts = {}) {
-  try {
-    if (!this.cosmosAvailable) {
-      // Fallback: ID local
-      const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      return { id };
-    }
-    const channel  = opts.channel || 'web';
-    const token    = opts.token || null;
-    const md       = opts.metadata || {};
-    const userId   = md.CveUsuario || md.userId || 'anonymous';
-    const userName = md.userName || `Usuario ${userId}`;
-    const convId   = md.conversationId || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const docId    = `conversation_${convId}`;
-    const nowIso   = DateTime.now().setZone('America/Mexico_City').toISO();
+     * ✅ CORREGIDO: Crea (o recupera) una conversación info
+     */
+    async createOrGetConversation(opts = {}) {
+        try {
+            if (!this.cosmosAvailable) {
+                // Fallback: ID local
+                const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                return { id };
+            }
+            
+            const channel = opts.channel || 'web';
+            const token = opts.token || null;
+            const md = opts.metadata || {};
+            const userId = md.CveUsuario || md.userId || 'anonymous';
+            const userName = md.userName || `Usuario ${userId}`;
+            const convId = md.conversationId || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            const docId = `conversation_${convId}`;
+            const nowIso = DateTime.now().setZone('America/Mexico_City').toISO();
 
-    const base = {
-      id: docId,
-      conversationId: convId,
-      userId,
-      userName,
-      documentType: 'conversation_info',
-      createdAt: nowIso,
-      lastActivity: nowIso,
-      messageCount: 0,
-      isActive: true,
-      channel,
-      metadata: md,
-      partitionKey: userId,
-      ttl: 60 * 60 * 24 * 90,
-      version: '2.1.3',
-      title: md.title || 'Nuevo chat',
-      token
-    };
+            const base = {
+                id: docId,
+                conversationId: convId,
+                userId,
+                userName,
+                documentType: 'conversation_info',
+                createdAt: nowIso,
+                lastActivity: nowIso,
+                messageCount: 0,
+                isActive: true,
+                channel,
+                metadata: md,
+                partitionKey: userId,
+                ttl: 60 * 60 * 24 * 90,
+                version: '2.1.3',
+                title: md.title || 'Nuevo chat',
+                token
+            };
 
-    const { resource } = await this.container.items.upsert(base);
-    return { id: resource?.conversationId || convId };
-  } catch (e) {
-    console.warn('createOrGetConversation error:', e?.message);
-    const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    return { id };
-  }
-}
-
-/**
- * Append de mensaje (compatible con el controlador).
- * Mapea role -> messageType y usa la doble persistencia del servicio.
- * @param {string} conversationId
- * @param {{role: 'user'|'assistant'|'system', content: string, userId?: string, userName?: string, metadata?: any, ts?: string, channel?: string}} msg
- */
-async appendMessage(conversationId, msg) {
-  try {
-    if (!conversationId || !msg?.content) return null;
-    const userId   = msg.userId || msg?.metadata?.CveUsuario || 'anonymous';
-    const userName = msg.userName || `Usuario ${userId}`;
-    const role     = msg.role || 'user';
-    const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
-
-    // Guarda individual + agrega a arreglo por roles (ya lo hace saveMessage -> addMessageToConversation)
-    return await this.saveMessage(msg.content, conversationId, userId, userName, messageType);
-  } catch (e) {
-    console.error('appendMessage error:', e);
-    return null;
-  }
-}
-
-/**
- * Historial simple para /history (formato: { role, content, ts }).
- * @param {string} conversationId
- * @param {{limit?: number, before?: string}} opts
- */
-async getMessages(conversationId, opts = {}) {
-  try {
-    if (!this.cosmosAvailable) return [];
-    const limit = Math.min(Number(opts.limit || 30), 100);
-    // Necesitamos saber la partición; hacemos una lectura previa desde conversation_info
-    const info = await this.getConversationInfo(conversationId, undefined);
-    const userId = info?.userId;
-    if (!userId) return [];
-
-    const q = {
-      query: `
-        SELECT c.id, c.message, c.messageType, c.timestamp
-        FROM c
-        WHERE c.conversationId = @conversationId
-        AND c.userId = @userId
-        AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
-        ORDER BY c.timestamp ASC
-      `,
-      parameters: [
-        { name: '@conversationId', value: conversationId },
-        { name: '@userId', value: userId }
-      ]
-    };
-
-    const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
-    const items = (resources || [])
-      .map(it => ({
-        role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
-        content: it.message,
-        ts: it.timestamp
-      }))
-      .slice(-limit);
-
-    return items;
-  } catch (e) {
-    console.warn('getMessages error:', e?.message);
-    return [];
-  }
-}
-
-/**
- * Lista conversaciones por usuario (sidebar del multi-chat).
- * @param {{owner: string, channel?: string, limit?: number}} opts
- */
-async listConversations(opts = {}) {
-  try {
-    if (!this.cosmosAvailable) return [];
-    const owner  = opts.owner;
-    const limit  = Math.min(Number(opts.limit || 50), 200);
-    if (!owner) return [];
-
-    const q = {
-      query: `
-        SELECT c.id, c.conversationId, c.userId, c.userName, c.title, c.lastActivity, c.createdAt, c.channel, c.metadata
-        FROM c
-        WHERE c.userId = @userId
-        AND c.documentType = 'conversation_info'
-        ORDER BY c.lastActivity DESC
-      `,
-      parameters: [{ name: '@userId', value: owner }]
-    };
-
-    const { resources } = await this.container.items.query(q, { partitionKey: owner }).fetchAll();
-    return (resources || []).slice(0, limit).map(r => ({
-      id: r.conversationId,
-      title: r.title || r.metadata?.title || 'Nuevo chat',
-      createdAt: r.createdAt,
-      lastMessageAt: r.lastActivity,
-      channel: r.channel || 'web',
-      metadata: r.metadata || {}
-    }));
-  } catch (e) {
-    console.warn('listConversations error:', e?.message);
-    return [];
-  }
-}
-
-/**
- * Alias: getUserConversations (por compatibilidad)
- */
-async getUserConversations(userId, { limit = 50, channel = 'web' } = {}) {
-  return this.listConversations({ owner: userId, channel, limit });
-}
-
-/**
- * Renombra conversación (actualiza conversation_info.title).
- * @param {string} conversationId
- * @param {string} title
- * @param {{by?: string}} opts
- */
-async renameConversation(conversationId, title, opts = {}) {
-  try {
-    if (!this.cosmosAvailable) return false;
-    const info = await this.getConversationInfo(conversationId, opts.by || undefined);
-    const userId = info?.userId || opts.by;
-    if (!userId) return false;
-
-    const docId = `conversation_${conversationId}`;
-    const now   = DateTime.now().setZone('America/Mexico_City').toISO();
-    const updated = {
-      ...(info || {}),
-      id: docId,
-      conversationId,
-      userId,
-      documentType: 'conversation_info',
-      title: title,
-      lastActivity: now,
-      partitionKey: userId,
-    };
-
-    const { resource } = await this.container.items.upsert(updated);
-    return !!resource;
-  } catch (e) {
-    console.warn('renameConversation error:', e?.message);
-    return false;
-  }
-}
-
-/**
- * Actualiza metadata arbitraria de conversation_info.
- * @param {string} conversationId
- * @param {object} meta
- */
-async updateConversationMetadata(conversationId, meta = {}) {
-  try {
-    if (!this.cosmosAvailable) return false;
-    const info = await this.getConversationInfo(conversationId, undefined);
-    const userId = info?.userId;
-    if (!userId) return false;
-
-    const docId = `conversation_${conversationId}`;
-    const merged = {
-      ...(info || {}),
-      id: docId,
-      conversationId,
-      userId,
-      documentType: 'conversation_info',
-      metadata: { ...(info?.metadata || {}), ...meta },
-      partitionKey: userId
-    };
-
-    const { resource } = await this.container.items.upsert(merged);
-    return !!resource;
-  } catch (e) {
-    console.warn('updateConversationMetadata error:', e?.message);
-    return false;
-  }
-}
-
-/**
- * Limpia mensajes de una conversación (individual + arreglo por roles).
- * @param {string} conversationId
- */
-async clearConversation(conversationId) {
-  try {
-    if (!this.cosmosAvailable) return false;
-    // necesitamos el owner para la partición
-    const info = await this.getConversationInfo(conversationId, undefined);
-    const userId = info?.userId;
-    if (!userId) return false;
-
-    // 1) borrar documento de arreglo por roles (si existe)
-    await this.cleanConversationMessages(conversationId, userId);
-
-    // 2) borrar mensajes individuales
-    const q = {
-      query: `
-        SELECT c.id
-        FROM c
-        WHERE c.conversationId = @conversationId
-        AND c.userId = @userId
-        AND c.documentType != 'conversation_info'
-      `,
-      parameters: [
-        { name: '@conversationId', value: conversationId },
-        { name: '@userId', value: userId }
-      ]
-    };
-    const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
-    for (const d of (resources || [])) {
-      try { await this.container.item(d.id, userId).delete(); } catch (_e) {}
+            const { resource } = await this.container.items.upsert(base);
+            return { id: resource?.conversationId || convId };
+            
+        } catch (e) {
+            console.warn('createOrGetConversation error:', e?.message);
+            const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            return { id };
+        }
     }
 
-    // 3) resetear counters en conversation_info
-    const docId = `conversation_${conversationId}`;
-    const now   = DateTime.now().setZone('America/Mexico_City').toISO();
-    const updated = {
-      ...(info || {}),
-      id: docId,
-      conversationId,
-      userId,
-      documentType: 'conversation_info',
-      lastActivity: now,
-      messageCount: 0,
-      isActive: true,
-      partitionKey: userId
-    };
-    await this.container.items.upsert(updated);
-    return true;
-  } catch (e) {
-    console.warn('clearConversation error:', e?.message);
-    return false;
-  }
+    /**
+     * ✅ CORREGIDO: Append de mensaje (compatible con el controlador)
+     */
+    async appendMessage(conversationId, msg) {
+        try {
+            if (!conversationId || !msg?.content) return null;
+            
+            const userId = msg.userId || msg?.metadata?.CveUsuario || 'anonymous';
+            const userName = msg.userName || `Usuario ${userId}`;
+            const role = msg.role || 'user';
+            const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
+
+            // Guarda individual + agrega a arreglo por roles (ya lo hace saveMessage -> addMessageToConversation)
+            return await this.saveMessage(msg.content, conversationId, userId, userName, messageType);
+            
+        } catch (e) {
+            console.error('appendMessage error:', e);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Historial para /history — devuelve [{role, content, ts}]
+     */
+    async getMessages(conversationId, opts = {}) {
+        try {
+            if (!this.cosmosAvailable) return [];
+            const limit = Math.min(Number(opts.limit || 30), 100);
+
+            // 1) Asegurar userId (partitionKey)
+            let userId = opts.userId;
+            if (!userId) {
+                const info = await this.getConversationInfo(conversationId, undefined);
+                userId = info?.userId;
+                if (!userId) {
+                    console.warn('getMessages: no se pudo resolver userId para', conversationId);
+                    return [];
+                }
+            }
+
+            // 2) Query de mensajes de la conversación (partitioned)
+            let queryText = `
+                SELECT c.id, c.message, c.messageType, c.timestamp
+                FROM c
+                WHERE c.conversationId = @conversationId
+                AND c.userId = @userId
+                AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+            `;
+
+            const params = [
+                { name: '@conversationId', value: conversationId },
+                { name: '@userId', value: userId }
+            ];
+
+            if (opts.before) {
+                queryText += ` AND c.timestamp < @before `;
+                params.push({ name: '@before', value: opts.before });
+            }
+
+            queryText += ` ORDER BY c.timestamp ASC`;
+
+            const { resources } = await this.container.items
+                .query({ query: queryText, parameters: params }, { partitionKey: userId })
+                .fetchAll();
+
+            // 3) Mapear al formato de salida
+            return (resources || [])
+                .map(it => ({
+                    role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
+                    content: it.message,
+                    ts: it.timestamp
+                }))
+                .slice(-limit);
+
+        } catch (e) {
+            console.warn('getMessages error:', e?.message);
+            return [];
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Lista conversaciones por usuario (sidebar del multi-chat)
+     */
+    async listConversations(opts = {}) {
+        try {
+            if (!this.cosmosAvailable) return [];
+            
+            const owner = opts.owner;
+            const limit = Math.min(Number(opts.limit || 50), 200);
+            if (!owner) return [];
+
+            const q = {
+                query: `
+                    SELECT c.id, c.conversationId, c.userId, c.userName, c.title, c.lastActivity, c.createdAt, c.channel, c.metadata
+                    FROM c
+                    WHERE c.userId = @userId
+                    AND c.documentType = 'conversation_info'
+                    ORDER BY c.lastActivity DESC
+                `,
+                parameters: [{ name: '@userId', value: owner }]
+            };
+
+            const { resources } = await this.container.items.query(q, { partitionKey: owner }).fetchAll();
+            return (resources || []).slice(0, limit).map(r => ({
+                id: r.conversationId,
+                title: r.title || r.metadata?.title || 'Nuevo chat',
+                createdAt: r.createdAt,
+                lastMessageAt: r.lastActivity,
+                channel: r.channel || 'web',
+                metadata: r.metadata || {}
+            }));
+            
+        } catch (e) {
+            console.warn('listConversations error:', e?.message);
+            return [];
+        }
+    }
+
+    /**
+     * Alias: getUserConversations (por compatibilidad)
+     */
+    async getUserConversations(userId, { limit = 50, channel = 'web' } = {}) {
+        return this.listConversations({ owner: userId, channel, limit });
+    }
+
+    /**
+     * ✅ CORREGIDO: Renombra conversación (actualiza conversation_info.title)
+     */
+    async renameConversation(conversationId, title, { by } = {}) {
+        try {
+            if (!this.cosmosAvailable) return false;
+            
+            let info = await this.getConversationInfo(conversationId, by);
+            const userId = info?.userId || by;
+            if (!userId) return false;
+
+            const docId = `conversation_${conversationId}`;
+            const now = DateTime.now().setZone('America/Mexico_City').toISO();
+            const updated = {
+                ...(info || {}),
+                id: docId,
+                conversationId,
+                userId,
+                documentType: 'conversation_info',
+                title,
+                lastActivity: now,
+                partitionKey: userId
+            };
+            
+            const { resource } = await this.container.items.upsert(updated);
+            return !!resource;
+            
+        } catch (e) {
+            console.warn('renameConversation error:', e?.message);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Actualiza metadata arbitraria de conversation_info
+     */
+    async updateConversationMetadata(conversationId, meta = {}) {
+        try {
+            if (!this.cosmosAvailable) return false;
+            
+            let info = await this.getConversationInfo(conversationId, undefined);
+            const userId = info?.userId;
+            if (!userId) return false;
+
+            const docId = `conversation_${conversationId}`;
+            const merged = {
+                ...(info || {}),
+                id: docId,
+                conversationId,
+                userId,
+                documentType: 'conversation_info',
+                metadata: { ...(info?.metadata || {}), ...meta },
+                partitionKey: userId
+            };
+            
+            const { resource } = await this.container.items.upsert(merged);
+            return !!resource;
+            
+        } catch (e) {
+            console.warn('updateConversationMetadata error:', e?.message);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Limpia mensajes de una conversación (individual + arreglo por roles)
+     */
+    async clearConversation(conversationId) {
+        try {
+            if (!this.cosmosAvailable) return false;
+            
+            // Necesitamos el owner para la partición
+            const info = await this.getConversationInfo(conversationId, undefined);
+            const userId = info?.userId;
+            if (!userId) return false;
+
+            // 1) Borrar documento de arreglo por roles (si existe)
+            await this.cleanConversationMessages(conversationId, userId);
+
+            // 2) Borrar mensajes individuales
+            const q = {
+                query: `
+                    SELECT c.id
+                    FROM c
+                    WHERE c.conversationId = @conversationId
+                    AND c.userId = @userId
+                    AND c.documentType != 'conversation_info'
+                `,
+                parameters: [
+                    { name: '@conversationId', value: conversationId },
+                    { name: '@userId', value: userId }
+                ]
+            };
+            
+            const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
+            for (const d of (resources || [])) {
+                try { 
+                    await this.container.item(d.id, userId).delete(); 
+                } catch (_e) {}
+            }
+
+            // 3) Resetear counters en conversation_info
+            const docId = `conversation_${conversationId}`;
+            const now = DateTime.now().setZone('America/Mexico_City').toISO();
+            const updated = {
+                ...(info || {}),
+                id: docId,
+                conversationId,
+                userId,
+                documentType: 'conversation_info',
+                lastActivity: now,
+                messageCount: 0,
+                isActive: true,
+                partitionKey: userId
+            };
+            
+            await this.container.items.upsert(updated);
+            return true;
+            
+        } catch (e) {
+            console.warn('clearConversation error:', e?.message);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Eliminar conversación completamente
+     */
+    async deleteConversation(conversationId, userId) {
+        try {
+            if (!this.cosmosAvailable) return false;
+            
+            if (!userId) {
+                const info = await this.getConversationInfo(conversationId, undefined);
+                userId = info?.userId;
+            }
+            if (!userId) return false;
+
+            // Eliminar todos los docs de la conversación
+            const q = {
+                query: `
+                    SELECT c.id
+                    FROM c 
+                    WHERE c.conversationId = @conversationId 
+                    AND c.userId = @userId
+                `,
+                parameters: [
+                    { name: '@conversationId', value: conversationId },
+                    { name: '@userId', value: userId }
+                ]
+            };
+            
+            const { resources: docs } = await this.container.items
+                .query(q, { partitionKey: userId })
+                .fetchAll();
+
+            let deletedCount = 0;
+            for (const doc of docs) {
+                try { 
+                    await this.container.item(doc.id, userId).delete(); 
+                    deletedCount++; 
+                } catch (error) { 
+                    console.warn(`⚠️ Error eliminando documento ${doc.id}:`, error.message); 
+                }
+            }
+
+            await this.cleanConversationMessages(conversationId, userId);
+            return deletedCount > 0;
+            
+        } catch (error) {
+            console.error(`❌ Error eliminando conversación:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Soft delete: marca como archivada la conversación
+     */
+    async softDeleteConversation(conversationId, opts = {}) {
+        try {
+            if (!this.cosmosAvailable) return false;
+            
+            const info = await this.getConversationInfo(conversationId, opts.by || undefined);
+            const userId = info?.userId || opts.by;
+            if (!userId) return false;
+
+            const docId = `conversation_${conversationId}`;
+            const updated = {
+                ...(info || {}),
+                id: docId,
+                conversationId,
+                userId,
+                documentType: 'conversation_info',
+                isActive: false,
+                archived: true,
+                partitionKey: userId
+            };
+            
+            const { resource } = await this.container.items.upsert(updated);
+            return !!resource;
+            
+        } catch (e) {
+            console.warn('softDeleteConversation error:', e?.message);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Busca conversation_info sin conocer la partitionKey (userId)
+     */
+    async findConversationInfoAnyPartition(conversationId) {
+        if (!this.cosmosAvailable) return null;
+        
+        const byIdQuery = {
+            query: `SELECT TOP 1 * FROM c WHERE c.id = @id`,
+            parameters: [{ name: '@id', value: `conversation_${conversationId}` }]
+        };
+        
+        try {
+            // Query sin partitionKey => cross-partition
+            let { resources } = await this.container.items.query(byIdQuery).fetchAll();
+            if (resources?.length) return resources[0];
+
+            const byConvQuery = {
+                query: `
+                    SELECT TOP 1 *
+                    FROM c
+                    WHERE c.documentType = 'conversation_info'
+                    AND c.conversationId = @conversationId
+                `,
+                parameters: [{ name: '@conversationId', value: conversationId }]
+            };
+            
+            const res2 = await this.container.items.query(byConvQuery).fetchAll();
+            return res2?.resources?.[0] || null;
+            
+        } catch (e) {
+            console.warn('findConversationInfoAnyPartition error:', e?.message);
+            return null;
+        }
+    }
 }
-
-/**
- * Soft delete: marca como archivada la conversación (no borra documentos).
- * @param {string} conversationId
- * @param {{by?: string}} opts
- */
-async softDeleteConversation(conversationId, opts = {}) {
-  try {
-    if (!this.cosmosAvailable) return false;
-    const info = await this.getConversationInfo(conversationId, opts.by || undefined);
-    const userId = info?.userId || opts.by;
-    if (!userId) return false;
-
-    const docId = `conversation_${conversationId}`;
-    const updated = {
-      ...(info || {}),
-      id: docId,
-      conversationId,
-      userId,
-      documentType: 'conversation_info',
-      isActive: false,
-      archived: true,
-      partitionKey: userId
-    };
-    const { resource } = await this.container.items.upsert(updated);
-    return !!resource;
-  } catch (e) {
-    console.warn('softDeleteConversation error:', e?.message);
-    return false;
-  }
-}
-}
-
-
