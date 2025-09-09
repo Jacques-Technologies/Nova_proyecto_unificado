@@ -970,5 +970,317 @@ async updateConversationActivity(conversationId, userId) {
             ]
         };
     }
+    /**
+ * Crea (o recupera) una conversación info.
+ * @param {{channel?: string, token?: string, metadata?: any}} opts
+ * @returns {Promise<{id: string}>}
+ */
+async createOrGetConversation(opts = {}) {
+  try {
+    if (!this.cosmosAvailable) {
+      // Fallback: ID local
+      const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      return { id };
+    }
+    const channel  = opts.channel || 'web';
+    const token    = opts.token || null;
+    const md       = opts.metadata || {};
+    const userId   = md.CveUsuario || md.userId || 'anonymous';
+    const userName = md.userName || `Usuario ${userId}`;
+    const convId   = md.conversationId || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const docId    = `conversation_${convId}`;
+    const nowIso   = DateTime.now().setZone('America/Mexico_City').toISO();
+
+    const base = {
+      id: docId,
+      conversationId: convId,
+      userId,
+      userName,
+      documentType: 'conversation_info',
+      createdAt: nowIso,
+      lastActivity: nowIso,
+      messageCount: 0,
+      isActive: true,
+      channel,
+      metadata: md,
+      partitionKey: userId,
+      ttl: 60 * 60 * 24 * 90,
+      version: '2.1.3',
+      title: md.title || 'Nuevo chat',
+      token
+    };
+
+    const { resource } = await this.container.items.upsert(base);
+    return { id: resource?.conversationId || convId };
+  } catch (e) {
+    console.warn('createOrGetConversation error:', e?.message);
+    const id = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return { id };
+  }
 }
+
+/**
+ * Append de mensaje (compatible con el controlador).
+ * Mapea role -> messageType y usa la doble persistencia del servicio.
+ * @param {string} conversationId
+ * @param {{role: 'user'|'assistant'|'system', content: string, userId?: string, userName?: string, metadata?: any, ts?: string, channel?: string}} msg
+ */
+async appendMessage(conversationId, msg) {
+  try {
+    if (!conversationId || !msg?.content) return null;
+    const userId   = msg.userId || msg?.metadata?.CveUsuario || 'anonymous';
+    const userName = msg.userName || `Usuario ${userId}`;
+    const role     = msg.role || 'user';
+    const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
+
+    // Guarda individual + agrega a arreglo por roles (ya lo hace saveMessage -> addMessageToConversation)
+    return await this.saveMessage(msg.content, conversationId, userId, userName, messageType);
+  } catch (e) {
+    console.error('appendMessage error:', e);
+    return null;
+  }
+}
+
+/**
+ * Historial simple para /history (formato: { role, content, ts }).
+ * @param {string} conversationId
+ * @param {{limit?: number, before?: string}} opts
+ */
+async getMessages(conversationId, opts = {}) {
+  try {
+    if (!this.cosmosAvailable) return [];
+    const limit = Math.min(Number(opts.limit || 30), 100);
+    // Necesitamos saber la partición; hacemos una lectura previa desde conversation_info
+    const info = await this.getConversationInfo(conversationId, undefined);
+    const userId = info?.userId;
+    if (!userId) return [];
+
+    const q = {
+      query: `
+        SELECT c.id, c.message, c.messageType, c.timestamp
+        FROM c
+        WHERE c.conversationId = @conversationId
+        AND c.userId = @userId
+        AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+        ORDER BY c.timestamp ASC
+      `,
+      parameters: [
+        { name: '@conversationId', value: conversationId },
+        { name: '@userId', value: userId }
+      ]
+    };
+
+    const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
+    const items = (resources || [])
+      .map(it => ({
+        role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
+        content: it.message,
+        ts: it.timestamp
+      }))
+      .slice(-limit);
+
+    return items;
+  } catch (e) {
+    console.warn('getMessages error:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Lista conversaciones por usuario (sidebar del multi-chat).
+ * @param {{owner: string, channel?: string, limit?: number}} opts
+ */
+async listConversations(opts = {}) {
+  try {
+    if (!this.cosmosAvailable) return [];
+    const owner  = opts.owner;
+    const limit  = Math.min(Number(opts.limit || 50), 200);
+    if (!owner) return [];
+
+    const q = {
+      query: `
+        SELECT c.id, c.conversationId, c.userId, c.userName, c.title, c.lastActivity, c.createdAt, c.channel, c.metadata
+        FROM c
+        WHERE c.userId = @userId
+        AND c.documentType = 'conversation_info'
+        ORDER BY c.lastActivity DESC
+      `,
+      parameters: [{ name: '@userId', value: owner }]
+    };
+
+    const { resources } = await this.container.items.query(q, { partitionKey: owner }).fetchAll();
+    return (resources || []).slice(0, limit).map(r => ({
+      id: r.conversationId,
+      title: r.title || r.metadata?.title || 'Nuevo chat',
+      createdAt: r.createdAt,
+      lastMessageAt: r.lastActivity,
+      channel: r.channel || 'web',
+      metadata: r.metadata || {}
+    }));
+  } catch (e) {
+    console.warn('listConversations error:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Alias: getUserConversations (por compatibilidad)
+ */
+async getUserConversations(userId, { limit = 50, channel = 'web' } = {}) {
+  return this.listConversations({ owner: userId, channel, limit });
+}
+
+/**
+ * Renombra conversación (actualiza conversation_info.title).
+ * @param {string} conversationId
+ * @param {string} title
+ * @param {{by?: string}} opts
+ */
+async renameConversation(conversationId, title, opts = {}) {
+  try {
+    if (!this.cosmosAvailable) return false;
+    const info = await this.getConversationInfo(conversationId, opts.by || undefined);
+    const userId = info?.userId || opts.by;
+    if (!userId) return false;
+
+    const docId = `conversation_${conversationId}`;
+    const now   = DateTime.now().setZone('America/Mexico_City').toISO();
+    const updated = {
+      ...(info || {}),
+      id: docId,
+      conversationId,
+      userId,
+      documentType: 'conversation_info',
+      title: title,
+      lastActivity: now,
+      partitionKey: userId,
+    };
+
+    const { resource } = await this.container.items.upsert(updated);
+    return !!resource;
+  } catch (e) {
+    console.warn('renameConversation error:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Actualiza metadata arbitraria de conversation_info.
+ * @param {string} conversationId
+ * @param {object} meta
+ */
+async updateConversationMetadata(conversationId, meta = {}) {
+  try {
+    if (!this.cosmosAvailable) return false;
+    const info = await this.getConversationInfo(conversationId, undefined);
+    const userId = info?.userId;
+    if (!userId) return false;
+
+    const docId = `conversation_${conversationId}`;
+    const merged = {
+      ...(info || {}),
+      id: docId,
+      conversationId,
+      userId,
+      documentType: 'conversation_info',
+      metadata: { ...(info?.metadata || {}), ...meta },
+      partitionKey: userId
+    };
+
+    const { resource } = await this.container.items.upsert(merged);
+    return !!resource;
+  } catch (e) {
+    console.warn('updateConversationMetadata error:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Limpia mensajes de una conversación (individual + arreglo por roles).
+ * @param {string} conversationId
+ */
+async clearConversation(conversationId) {
+  try {
+    if (!this.cosmosAvailable) return false;
+    // necesitamos el owner para la partición
+    const info = await this.getConversationInfo(conversationId, undefined);
+    const userId = info?.userId;
+    if (!userId) return false;
+
+    // 1) borrar documento de arreglo por roles (si existe)
+    await this.cleanConversationMessages(conversationId, userId);
+
+    // 2) borrar mensajes individuales
+    const q = {
+      query: `
+        SELECT c.id
+        FROM c
+        WHERE c.conversationId = @conversationId
+        AND c.userId = @userId
+        AND c.documentType != 'conversation_info'
+      `,
+      parameters: [
+        { name: '@conversationId', value: conversationId },
+        { name: '@userId', value: userId }
+      ]
+    };
+    const { resources } = await this.container.items.query(q, { partitionKey: userId }).fetchAll();
+    for (const d of (resources || [])) {
+      try { await this.container.item(d.id, userId).delete(); } catch (_e) {}
+    }
+
+    // 3) resetear counters en conversation_info
+    const docId = `conversation_${conversationId}`;
+    const now   = DateTime.now().setZone('America/Mexico_City').toISO();
+    const updated = {
+      ...(info || {}),
+      id: docId,
+      conversationId,
+      userId,
+      documentType: 'conversation_info',
+      lastActivity: now,
+      messageCount: 0,
+      isActive: true,
+      partitionKey: userId
+    };
+    await this.container.items.upsert(updated);
+    return true;
+  } catch (e) {
+    console.warn('clearConversation error:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Soft delete: marca como archivada la conversación (no borra documentos).
+ * @param {string} conversationId
+ * @param {{by?: string}} opts
+ */
+async softDeleteConversation(conversationId, opts = {}) {
+  try {
+    if (!this.cosmosAvailable) return false;
+    const info = await this.getConversationInfo(conversationId, opts.by || undefined);
+    const userId = info?.userId || opts.by;
+    if (!userId) return false;
+
+    const docId = `conversation_${conversationId}`;
+    const updated = {
+      ...(info || {}),
+      id: docId,
+      conversationId,
+      userId,
+      documentType: 'conversation_info',
+      isActive: false,
+      archived: true,
+      partitionKey: userId
+    };
+    const { resource } = await this.container.items.upsert(updated);
+    return !!resource;
+  } catch (e) {
+    console.warn('softDeleteConversation error:', e?.message);
+    return false;
+  }
+}
+}
+
 
