@@ -1,26 +1,26 @@
-// routes/webchatRoute.js
-import { Router } from 'express';
-import * as WebchatController from '../controllers/webchatController.js';
+// src/routes/webchatRoute.js
+import express from 'express';
+import * as webchatController from '../controllers/webchatController.js';
 
-const router = Router();
+const router = express.Router();
 
-// Conversación base
-router.get('/init', WebchatController.init);
-router.post('/ask', WebchatController.ask);
-router.get('/history', WebchatController.history);
-router.get('/stream', WebchatController.stream);
+// Rutas WebChat (solo los endpoints, sin repetir /webchat)
+router.get('/init', webchatController.init);
+router.post('/init', webchatController.init);
 
-// Limpiar conversación actual (borra mensajes pero mantiene la conversación)
-router.post('/clear', WebchatController.clear);
+router.post('/ask', webchatController.ask);
+router.get('/history', webchatController.history);
 
-// Multi-chat estilo ChatGPT (sin eliminación)
-router.get('/conversations', WebchatController.conversations);           // listar por token
-router.patch('/conversation/:id', WebchatController.renameConversation); // renombrar
-// routes/webchat.js
-router.get('/webchat/summary', webchatController.summary);
+router.get('/stream', webchatController.stream);
+router.post('/stream', webchatController.stream);
 
+router.get('/status', webchatController.status);
+router.post('/clear', webchatController.clear);
 
-// Opcional: health/status del stack
-router.get('/status', WebchatController.status);
+router.get('/conversations', webchatController.conversations);
+router.patch('/conversation/:id', webchatController.renameConversation);
+
+// ➕ resumen
+router.get('/summary', webchatController.summary);
 
 export default router;
