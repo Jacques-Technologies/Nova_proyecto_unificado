@@ -86,7 +86,8 @@ export async function init(req, res) {
 /* ============================================================
    ASK: procesar un mensaje del usuario
    POST /api/webchat/ask
-   body: { token, conversationId, content, CveUsuario?, NumRI?, metadata? }
+   body: { token, conversationId?, content, CveUsuario?, NumRI?, metadata? }
+   🔁 Lectura de historial por TOKEN (última conversación activa)
 ============================================================ */
 export async function ask(req, res) {
   try {
@@ -95,10 +96,10 @@ export async function ask(req, res) {
 
     console.log(`📝 WebChat ASK - Token: ${token?.substring(0, 8)}..., Msg: "${content?.substring(0, 50)}..."`);
 
-    if (!token || !conversationId || !content) {
+    if (!token || !content) {
       return res.status(400).json({
         success: false,
-        message: 'Faltan parámetros: token, conversationId, content'
+        message: 'Faltan parámetros: token, content'
       });
     }
 
@@ -106,10 +107,25 @@ export async function ask(req, res) {
       return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
+    // Resolver conversationId: usar el que llegó o último por token; crear si no existe
+    let convId = conversationId;
+    if (!convId) {
+      convId = (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId'))
+        ? (await cosmos.getLatestConversationId(token))
+        : null;
+
+      if (!convId) {
+        const created = (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation'))
+          ? await cosmos.createOrGetConversation({ channel: 'web', token, metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } })
+          : null;
+        convId = created?.id || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      }
+    }
+
     // Guardar mensaje del usuario
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(conversationId, {
+        await cosmos.appendMessage(convId, {
           role: 'user',
           content,
           metadata: { ...(metadata || {}), token, CveUsuario, NumRI },
@@ -125,15 +141,14 @@ export async function ask(req, res) {
     // Info de usuario para AI
     const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
 
-    // Historial usando token
+    // Historial usando sólo token (última conversación activa)
     let historial = [];
     try {
-      if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-        historial = await cosmos.getConversationForOpenAI(conversationId, token) || [];
-        historial = historial.slice(-10);
+      if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
+        historial = await cosmos.getConversationForOpenAIByToken(token, true, 10);
       }
     } catch (error) {
-      console.warn('Error obteniendo historial:', error.message);
+      console.warn('Error obteniendo historial (token):', error.message);
       historial = [];
     }
 
@@ -143,7 +158,7 @@ export async function ask(req, res) {
       historial,
       token,
       userInfo,
-      conversationId
+      convId
     );
 
     let replyText = '';
@@ -165,7 +180,7 @@ export async function ask(req, res) {
     // Guardar respuesta del asistente
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(conversationId, {
+        await cosmos.appendMessage(convId, {
           role: 'assistant',
           content: replyText,
           citations: citations || [],
@@ -183,7 +198,7 @@ export async function ask(req, res) {
       success: true,
       message: replyText,
       citations,
-      conversationId,
+      conversationId: convId,
       metadata: {
         toolsUsed: response?.metadata?.toolsUsed || null,
         usage: response?.metadata?.usage || null
@@ -205,32 +220,43 @@ export async function ask(req, res) {
 
 /* ============================================================
    HISTORY
-   GET /api/webchat/history?conversationId=...&token=...&limit=30&before=...
+   GET /api/webchat/history?token=...&limit=30&before=...&conversationId?=...
+   🔁 Si no envían conversationId, lee por TOKEN (última conversación activa)
 ============================================================ */
 export async function history(req, res) {
   try {
-    const { conversationId, token, limit = 30, before } = req.query;
+    const { token, conversationId, limit = 30, before } = req.query;
     
-    if (!conversationId || !token) {
+    if (!token) {
       return res.status(400).json({ 
         success: false, 
-        message: 'conversationId y token requeridos' 
+        message: 'token requerido' 
       });
     }
 
     let items = [];
     try {
-      if (cosmosAvailable() && isFn(cosmos, 'getMessages')) {
-        items = await cosmos.getMessages(conversationId, { 
-          token, 
-          limit: Number(limit), 
-          before: before || null 
-        }) || [];
+      if (cosmosAvailable()) {
+        if (conversationId && isFn(cosmos, 'getMessages')) {
+          // Si te mandan conversationId explícito, lo respetas
+          items = await cosmos.getMessages(conversationId, { 
+            token, 
+            limit: Number(limit), 
+            before: before || null 
+          }) || [];
+        } else if (isFn(cosmos, 'getMessagesByToken')) {
+          // Si no, lees por token (última conversación activa)
+          items = await cosmos.getMessagesByToken(token, { 
+            limit: Number(limit), 
+            before: before || null 
+          }) || [];
+        }
       }
     } catch (error) {
-      console.warn('Error obteniendo historial:', error.message);
+      console.warn('Error obteniendo historial (token):', error.message);
     }
-    return res.json({ success: true, items });
+
+    return res.json({ success: true, items: items || [] });
   } catch (err) {
     console.error('history error:', err);
     return res.status(500).json({ success: false, message: 'Error obteniendo historial' });
@@ -240,6 +266,7 @@ export async function history(req, res) {
 /* ============================================================
    STREAM (SSE simulado)
    GET/POST /api/webchat/stream
+   🔁 Historial por TOKEN; tolera ausencia de conversationId igual que ASK
 ============================================================ */
 export async function stream(req, res) {
   try {
@@ -251,9 +278,24 @@ export async function stream(req, res) {
 
     console.log(`📝 WebChat STREAM - Token: ${token?.substring(0, 8)}...`);
 
-    if (!token || !conversationId || !content) {
+    if (!token || !content) {
       res.status(400).end();
       return;
+    }
+
+    // Resolver conversationId si no viene
+    let convId = conversationId;
+    if (!convId) {
+      convId = (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId'))
+        ? (await cosmos.getLatestConversationId(token))
+        : null;
+
+      if (!convId) {
+        const created = (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation'))
+          ? await cosmos.createOrGetConversation({ channel: 'web', token, metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } })
+          : null;
+        convId = created?.id || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      }
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -266,7 +308,7 @@ export async function stream(req, res) {
     try {
       // Guardar mensaje del usuario
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(conversationId, {
+        await cosmos.appendMessage(convId, {
           role: 'user',
           content,
           ts: DateTime.utc().toISO(),
@@ -276,21 +318,20 @@ export async function stream(req, res) {
         });
       }
 
-      // Historial para IA usando token
+      // Historial para IA usando sólo token (última conversación activa)
       let historial = [];
       try {
-        if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAI')) {
-          historial = await cosmos.getConversationForOpenAI(conversationId, token) || [];
-          historial = historial.slice(-10);
+        if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
+          historial = await cosmos.getConversationForOpenAIByToken(token, true, 10);
         }
       } catch (error) {
-        console.warn('Error obteniendo historial para stream:', error.message);
+        console.warn('Error obteniendo historial para stream (token):', error.message);
       }
 
       const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
 
       // Procesar con IA (no streaming nativo)
-      const response = await ai.procesarMensaje(content, historial, token, userInfo, conversationId);
+      const response = await ai.procesarMensaje(content, historial, token, userInfo, convId);
 
       let replyText = '';
       if (typeof response === 'string') replyText = response;
@@ -309,7 +350,7 @@ export async function stream(req, res) {
       // Guardar respuesta completa
       try {
         if (isFn(cosmos, 'appendMessage')) {
-          await cosmos.appendMessage(conversationId, {
+          await cosmos.appendMessage(convId, {
             role: 'assistant',
             content: replyText,
             ts: DateTime.utc().toISO(),
@@ -365,13 +406,22 @@ export async function status(req, res) {
 export async function clear(req, res) {
   try {
     const { token, conversationId } = req.body || {};
-    if (!token || !conversationId) {
-      return res.status(400).json({ success: false, message: 'token y conversationId requeridos' });
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
+    }
+
+    // Si no llega conversationId, limpiar la última conversación activa de ese token
+    let convId = conversationId;
+    if (!convId && cosmosAvailable() && isFn(cosmos, 'getLatestConversationId')) {
+      convId = await cosmos.getLatestConversationId(token);
+    }
+    if (!convId) {
+      return res.json({ success: true, cleared: true }); // nada que limpiar
     }
 
     if (isFn(cosmos, 'clearConversation')) {
       try {
-        const ok = await cosmos.clearConversation(conversationId, token);
+        const ok = await cosmos.clearConversation(convId, token);
         if (ok) return res.json({ success: true, cleared: true });
       } catch (e) {
         console.warn('clearConversation error:', e?.message);
@@ -381,7 +431,7 @@ export async function clear(req, res) {
     // Fallback: evento system
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        await cosmos.appendMessage(conversationId, {
+        await cosmos.appendMessage(convId, {
           role: 'system',
           content: '[Conversación reiniciada por el usuario]',
           ts: DateTime.utc().toISO(),
@@ -427,7 +477,7 @@ export async function conversations(req, res) {
     }
 
     const normalized = (items || []).map(it => ({
-      id: it.id || it.conversationId,
+      id: it.conversationId || it.id,
       title: it.title || it.metadata?.title || 'Nuevo chat',
       createdAt: it.createdAt || it.ts || it._ts || null,
       lastMessageAt: it.lastActivity || it.lastMessageAt || it.updatedAt || null,

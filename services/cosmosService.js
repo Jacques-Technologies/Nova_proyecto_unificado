@@ -88,7 +88,32 @@ export default class CosmosService {
     return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  /** 🔎 Buscar información de conversación por token */
+  /** 🧭 Devuelve el último conversationId activo para un token */
+  async getLatestConversationId(token) {
+    try {
+      if (!this.cosmosAvailable || !token) return null;
+
+      const q = {
+        query: `
+          SELECT TOP 1 c.conversationId
+          FROM c
+          WHERE c.userToken = @token
+            AND c.documentType = 'conversation_info'
+            AND c.isActive = true
+          ORDER BY c.lastActivity DESC
+        `,
+        parameters: [{ name: '@token', value: token }],
+      };
+
+      const { resources } = await this.container.items.query(q, { partitionKey: token }).fetchAll();
+      return resources?.[0]?.conversationId || null;
+    } catch (e) {
+      console.warn('getLatestConversationId error:', e?.message);
+      return null;
+    }
+  }
+
+  /** 🔎 Buscar información de conversación por token + conversationId */
   async findConversationInfoByToken(conversationId, token) {
     if (!this.cosmosAvailable || !token) return null;
 
@@ -188,7 +213,6 @@ export default class CosmosService {
       console.log(`💾 [${token}] Guardando info de conversación: ${conversationDocId}`);
 
       const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
-      
       console.log(`✅ [${token}] Info de conversación guardada exitosamente`);
       return upsertedItem;
 
@@ -262,6 +286,19 @@ export default class CosmosService {
       return filtered.map((m) => ({ role: m.role, content: m.content }));
     } catch (e) {
       console.error('❌ Error formateando para OpenAI:', e.message);
+      return [];
+    }
+  }
+
+  /** 🧠 Formato OpenAI usando sólo token (toma la conversación más reciente) */
+  async getConversationForOpenAIByToken(token, includeSystem = true, limit = 30) {
+    try {
+      const convId = await this.getLatestConversationId(token);
+      if (!convId) return [];
+      const msgs = await this.getConversationForOpenAI(convId, token, includeSystem);
+      return (msgs || []).slice(-Math.min(limit, 100));
+    } catch (e) {
+      console.warn('getConversationForOpenAIByToken error:', e?.message);
       return [];
     }
   }
@@ -369,7 +406,7 @@ export default class CosmosService {
     }
   }
 
-  /** 📊 Stats de conversaciones */
+  /** 📊 Stats de conversaciones (formato roles) */
   async getConversationMessagesStats() {
     try {
       if (!this.cosmosAvailable) return { available: false };
@@ -443,6 +480,80 @@ export default class CosmosService {
         }));
     } catch (error) {
       console.error('❌ Error obteniendo historial:', error.message);
+      return [];
+    }
+  }
+
+  /** 📜 getMessages (API /history) — devuelve [{role, content, ts}] */
+  async getMessages(conversationId, opts = {}) {
+    try {
+      if (!this.cosmosAvailable) return [];
+      
+      const limit = Math.min(Number(opts.limit || 30), 100);
+      const token = opts.token;
+      
+      if (!token) {
+        console.warn('getMessages: token requerido');
+        return [];
+      }
+
+      let queryText = `
+        SELECT c.id, c.message, c.messageType, c.timestamp
+        FROM c
+        WHERE c.conversationId = @conversationId
+          AND c.userToken = @token
+          AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+      `;
+
+      const params = [
+        { name: '@conversationId', value: conversationId },
+        { name: '@token', value: token },
+      ];
+
+      if (opts.before) {
+        queryText += ` AND c.timestamp < @before `;
+        params.push({ name: '@before', value: opts.before });
+      }
+
+      queryText += ` ORDER BY c.timestamp ASC`;
+
+      const { resources } = await this.container.items
+        .query({ query: queryText, parameters: params }, { partitionKey: token })
+        .fetchAll();
+
+      return (resources || [])
+        .map((it) => ({
+          role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
+          content: it.message,
+          ts: it.timestamp,
+        }))
+        .slice(-limit);
+    } catch (e) {
+      console.warn('getMessages error:', e?.message);
+      return [];
+    }
+  }
+
+  /** 📜 Obtener mensajes por token (conversación más reciente) */
+  async getMessagesByToken(token, { limit = 30, before = null } = {}) {
+    try {
+      const convId = await this.getLatestConversationId(token);
+      if (!convId) return [];
+      return await this.getMessages(convId, { token, limit, before });
+    } catch (e) {
+      console.warn('getMessagesByToken error:', e?.message);
+      return [];
+    }
+  }
+
+  /** 📚 Historial (mensajes individuales) por token */
+  async getConversationHistoryByToken(token, limit = 20) {
+    try {
+      const convId = await this.getLatestConversationId(token);
+      if (!convId) return [];
+      return await this.getConversationHistory(convId, token, limit);
+    } catch (e) {
+      console.warn('getConversationHistoryByToken error:', e?.message);
       return [];
     }
   }
@@ -635,56 +746,6 @@ export default class CosmosService {
     } catch (e) {
       console.warn('clearConversation error:', e?.message);
       return false;
-    }
-  }
-
-  /** 📜 getMessages (API /history) — devuelve [{role, content, ts}] */
-  async getMessages(conversationId, opts = {}) {
-    try {
-      if (!this.cosmosAvailable) return [];
-      
-      const limit = Math.min(Number(opts.limit || 30), 100);
-      const token = opts.token;
-      
-      if (!token) {
-        console.warn('getMessages: token requerido');
-        return [];
-      }
-
-      let queryText = `
-        SELECT c.id, c.message, c.messageType, c.timestamp
-        FROM c
-        WHERE c.conversationId = @conversationId
-          AND c.userToken = @token
-          AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
-      `;
-
-      const params = [
-        { name: '@conversationId', value: conversationId },
-        { name: '@token', value: token },
-      ];
-
-      if (opts.before) {
-        queryText += ` AND c.timestamp < @before `;
-        params.push({ name: '@before', value: opts.before });
-      }
-
-      queryText += ` ORDER BY c.timestamp ASC`;
-
-      const { resources } = await this.container.items
-        .query({ query: queryText, parameters: params }, { partitionKey: token })
-        .fetchAll();
-
-      return (resources || [])
-        .map((it) => ({
-          role: it.messageType === 'bot' ? 'assistant' : (it.messageType === 'system' ? 'system' : 'user'),
-          content: it.message,
-          ts: it.timestamp,
-        }))
-        .slice(-limit);
-    } catch (e) {
-      console.warn('getMessages error:', e?.message);
-      return [];
     }
   }
 
