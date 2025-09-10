@@ -23,6 +23,8 @@ router.patch('/conversation/:id', webchatController.renameConversation);
 // Utilidades
 router.get('/summary', webchatController.summary);
 
+router.get('/verify-historial', webchatController.verifyHistorial);
+
 // 🔍 Endpoints de debug (ordenados por nivel de detalle)
 router.get('/debug', webchatController.debugToken);           // Debug básico
 router.get('/deep-debug', webchatController.deepDebug);       // Debug intermedio  

@@ -157,6 +157,116 @@ export async function debugComplete(req, res) {
   }
 }
 
+// 3. ENDPOINT DE VERIFICACIÓN en webchatController.js
+export async function verifyHistorial(req, res) {
+  try {
+    const { token } = req.query;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
+    }
+
+    console.log(`🔍 VERIFICACIÓN HISTORIAL - Token: ${token.substring(0, 8)}...`);
+
+    const verification = {
+      token: token.substring(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+      tests: {},
+      recommendations: []
+    };
+
+    // Test 1: getMessagesByToken
+    console.log('📊 Test 1: getMessagesByToken');
+    try {
+      const messages = await cosmos.getMessagesByToken(token, { limit: 10 });
+      verification.tests.getMessagesByToken = {
+        success: true,
+        count: messages?.length || 0,
+        hasMessages: messages && messages.length > 0,
+        sample: messages?.slice(0, 2)?.map(m => ({
+          role: m.role,
+          preview: m.content?.substring(0, 30) + '...',
+          timestamp: m.ts
+        })) || []
+      };
+    } catch (error) {
+      verification.tests.getMessagesByToken = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // Test 2: getConversationForOpenAIByToken
+    console.log('📊 Test 2: getConversationForOpenAIByToken');
+    try {
+      const openaiMessages = await cosmos.getConversationForOpenAIByToken(token, true, 10);
+      verification.tests.getConversationForOpenAI = {
+        success: true,
+        count: openaiMessages?.length || 0,
+        hasMessages: openaiMessages && openaiMessages.length > 0,
+        sample: openaiMessages?.slice(0, 2)?.map(m => ({
+          role: m.role,
+          preview: m.content?.substring(0, 30) + '...'
+        })) || []
+      };
+    } catch (error) {
+      verification.tests.getConversationForOpenAI = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // Test 3: Simular flujo completo ASK
+    console.log('📊 Test 3: Simulación de flujo ASK');
+    const simulationSuccess = 
+      verification.tests.getConversationForOpenAI?.hasMessages || 
+      verification.tests.getMessagesByToken?.hasMessages;
+
+    verification.tests.askFlowSimulation = {
+      success: simulationSuccess,
+      wouldHaveContext: simulationSuccess,
+      contextSource: verification.tests.getConversationForOpenAI?.hasMessages 
+        ? 'getConversationForOpenAIByToken' 
+        : (verification.tests.getMessagesByToken?.hasMessages ? 'getMessagesByToken' : 'none')
+    };
+
+    // Generar recomendaciones
+    if (!simulationSuccess) {
+      verification.recommendations.push({
+        priority: 'critical',
+        issue: 'Sin historial disponible',
+        action: 'Verificar que appendMessage esté guardando correctamente',
+        check: 'Revisar logs de saveMessage y estructura de documentos'
+      });
+    } else {
+      verification.recommendations.push({
+        priority: 'info',
+        issue: 'Historial funcionando',
+        action: 'Sistema operativo',
+        note: `Contexto disponible desde: ${verification.tests.askFlowSimulation.contextSource}`
+      });
+    }
+
+    // Estado general
+    verification.status = simulationSuccess ? 'working' : 'broken';
+
+    return res.json({ 
+      success: true, 
+      verification,
+      nextSteps: simulationSuccess 
+        ? ['Monitoreo continuo', 'Verificar performance de queries']
+        : ['Revisar appendMessage', 'Verificar estructura de documentos', 'Ejecutar debug completo']
+    });
+
+  } catch (err) {
+    console.error('❌ verifyHistorial error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Error en verificación',
+      error: err.message
+    });
+  }
+}
 /** 🧪 Test específico de continuidad de conversación */
 async function testContinuity(token) {
   const test = {
@@ -342,8 +452,7 @@ function generateDebugSummary(debug) {
   return summary;
 }
 
-// controllers/webchatController.js - PARCHE CRÍTICO para el método ask
-// Reemplaza la sección de resolución de conversationId
+// controllers/webchatController.js - MÉTODO ASK CORREGIDO PARA CONTINUIDAD
 
 export async function ask(req, res) {
   try {
@@ -363,14 +472,13 @@ export async function ask(req, res) {
       return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
-    // ✅ CRÍTICO: Resolución mejorada de conversationId con múltiples métodos
+    // ✅ CRÍTICO: Resolución mejorada de conversationId
     let convId = conversationId;
     console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
     
     if (!convId && cosmosAvailable()) {
       console.log(`🔍 Buscando conversación existente por token...`);
       
-      // MÉTODO 1: getLatestConversationId mejorado
       try {
         convId = await cosmos.getLatestConversationId(token);
         console.log(`🎯 getLatestConversationId result: ${convId || 'null'}`);
@@ -378,110 +486,35 @@ export async function ask(req, res) {
         console.warn('⚠️ Error en getLatestConversationId:', error.message);
       }
 
-      // MÉTODO 2: Query directo para encontrar conversación activa
+      // Si no hay conversationId, crear nueva
       if (!convId) {
-        console.log(`🔍 Query directo para conversación activa...`);
+        console.log(`➕ Creando nueva conversación...`);
         try {
-          const directQuery = {
-            query: `
-              SELECT TOP 1 c.conversationId
-              FROM c
-              WHERE c.userToken = @token
-                AND IS_DEFINED(c.conversationId)
-                AND c.conversationId != ''
-            `,
-            parameters: [{ name: '@token', value: token }]
-          };
-
-          const { resources } = await cosmos.container.items
-            .query(directQuery, { partitionKey: token })
-            .fetchAll();
-
-          if (resources && resources.length > 0) {
-            // Encontrar la conversación más reciente manualmente
-            const conversations = {};
-            
-            for (const doc of resources) {
-              const cId = doc.conversationId;
-              if (!conversations[cId]) {
-                conversations[cId] = { convId: cId, count: 0 };
-              }
-              conversations[cId].count++;
-            }
-
-            // Tomar la conversación con más mensajes (más activa)
-            const sortedConversations = Object.values(conversations)
-              .sort((a, b) => b.count - a.count);
-
-            if (sortedConversations.length > 0) {
-              convId = sortedConversations[0].convId;
-              console.log(`🎯 Query directo encontró: ${convId} (${sortedConversations[0].count} mensajes)`);
-            }
+          if (isFn(cosmos, 'createOrGetConversation')) {
+            const created = await cosmos.createOrGetConversation({ 
+              channel: 'web', 
+              token, 
+              metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
+            });
+            convId = created?.id;
           }
-        } catch (directError) {
-          console.warn('⚠️ Error en query directo:', directError.message);
+        } catch (error) {
+          console.warn('⚠️ Error creando conversación:', error.message);
         }
-      }
-
-      // MÉTODO 3: Usar mensajes para inferir conversación más reciente
-      if (!convId) {
-        console.log(`🔍 Infiriendo conversación desde mensajes...`);
-        try {
-          const messages = await cosmos.getMessagesByToken(token, { limit: 50 });
-          console.log(`📊 getMessagesByToken para inferir conversación: ${messages?.length || 0} mensajes`);
-          
-          if (messages && messages.length > 0) {
-            // Buscar conversationId en los mensajes más recientes
-            const msgQuery = {
-              query: `
-                SELECT DISTINCT c.conversationId
-                FROM c
-                WHERE c.userToken = @token
-                  AND IS_DEFINED(c.conversationId)
-                  AND c.conversationId != ''
-                  AND (c.messageType = 'user' OR c.messageType = 'bot')
-              `,
-              parameters: [{ name: '@token', value: token }]
-            };
-
-            const { resources: convResources } = await cosmos.container.items
-              .query(msgQuery, { partitionKey: token })
-              .fetchAll();
-
-            if (convResources && convResources.length > 0) {
-              // Tomar la primera conversación encontrada
-              convId = convResources[0].conversationId;
-              console.log(`🎯 Conversación inferida desde mensajes: ${convId}`);
-            }
-          }
-        } catch (inferError) {
-          console.warn('⚠️ Error infiriendo conversación:', inferError.message);
+        
+        if (!convId) {
+          convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         }
+        console.log(`✅ Nueva conversación: ${convId}`);
+      } else {
+        console.log(`✅ Usando conversación existente: ${convId}`);
       }
     }
 
-    // Si aún no hay conversationId, crear nueva
+    // Fallback si no hay convId
     if (!convId) {
-      console.log(`➕ Creando nueva conversación...`);
-      try {
-        if (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation')) {
-          const created = await cosmos.createOrGetConversation({ 
-            channel: 'web', 
-            token, 
-            metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
-          });
-          convId = created?.id;
-        }
-      } catch (error) {
-        console.warn('⚠️ Error creando conversación:', error.message);
-      }
-      
-      if (!convId) {
-        convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      }
-      console.log(`✅ Nueva conversación: ${convId}`);
-    } else {
-      console.log(`✅ Usando conversación existente: ${convId}`);
+      convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      console.log(`🔄 Fallback conversationId: ${convId}`);
     }
 
     // Guardar mensaje del usuario
@@ -551,6 +584,24 @@ export async function ask(req, res) {
       historial = [];
     }
 
+    // ✅ NUEVA VALIDACIÓN: Verificar que el historial contiene mensajes válidos
+    if (historial && historial.length > 0) {
+      // Filtrar mensajes inválidos
+      const validHistorial = historial.filter(msg => 
+        msg && 
+        msg.role && 
+        msg.content && 
+        msg.content.trim() !== '' &&
+        msg.content !== 'undefined' &&
+        msg.content !== 'null'
+      );
+      
+      if (validHistorial.length !== historial.length) {
+        console.log(`🔧 Filtrados ${historial.length - validHistorial.length} mensajes inválidos`);
+        historial = validHistorial;
+      }
+    }
+
     // Log detallado del historial para debug
     if (historial && historial.length > 0) {
       console.log(`📚 === HISTORIAL ENCONTRADO ===`);
@@ -558,11 +609,16 @@ export async function ask(req, res) {
       console.log(`📚 Primer mensaje: ${historial[0]?.role}: ${historial[0]?.content?.substring(0, 50)}...`);
       console.log(`📚 Último mensaje: ${historial[historial.length - 1]?.role}: ${historial[historial.length - 1]?.content?.substring(0, 50)}...`);
       
-      // Mostrar contexto completo para debug
+      // Mostrar contexto completo para debug (solo primeros y últimos 2)
       console.log(`📚 Contexto completo:`);
-      historial.forEach((msg, idx) => {
-        console.log(`   ${idx + 1}. ${msg.role}: ${msg.content?.substring(0, 80)}...`);
+      const showMessages = historial.length <= 4 ? historial : [...historial.slice(0, 2), ...historial.slice(-2)];
+      showMessages.forEach((msg, idx) => {
+        const actualIdx = historial.length <= 4 ? idx : (idx < 2 ? idx : historial.length - (4 - idx));
+        console.log(`   ${actualIdx + 1}. ${msg.role}: ${msg.content?.substring(0, 80)}...`);
       });
+      if (historial.length > 4) {
+        console.log(`   [...${historial.length - 4} mensajes más...]`);
+      }
     } else {
       console.warn(`⚠️ === NO SE ENCONTRÓ HISTORIAL ===`);
       console.warn(`⚠️ Token: ${token?.substring(0, 8)}...`);
@@ -638,8 +694,16 @@ export async function ask(req, res) {
       metadata: {
         toolsUsed: response?.metadata?.toolsUsed || null,
         usage: response?.metadata?.usage || null,
-        contextLength: historial?.length || 0, // ✅ NUEVO: info de contexto
-        conversationContinued: !!(historial && historial.length > 0) // ✅ NUEVO: indica si hubo continuidad
+        contextLength: historial?.length || 0,
+        conversationContinued: !!(historial && historial.length > 0),
+        // ✅ NUEVO: Información de debug para monitoreo
+        debug: {
+          tokenUsed: token?.substring(0, 8) + '...',
+          conversationIdFound: !!conversationId,
+          conversationIdUsed: convId,
+          historialMethodsAttempted: ['getConversationForOpenAIByToken', 'getMessagesByToken', 'getConversationForOpenAI'],
+          messagesValidated: historial?.length || 0
+        }
       }
     });
   } catch (err) {

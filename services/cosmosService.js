@@ -611,68 +611,129 @@ async getConversationForOpenAIByToken(token, includeSystem = true, limit = 30) {
     }
   }
 
-  /** 💾 Guardar mensaje individual + sync a arreglo por roles */
-  async saveMessage(message, conversationId, token, userName = null, messageType = 'user') {
-    try {
-      if (!message || !conversationId || !token) return null;
+ // ============================================
+// CORRECCIONES ADICIONALES REQUERIDAS
+// ============================================
 
-      const role = messageType === 'bot' ? 'assistant' : (messageType === 'system' ? 'system' : 'user');
-      const ts = DateTime.now().setZone('America/Mexico_City').toISO();
+// 1. MÉTODO appendMessage CORREGIDO en cosmosService.js
+async appendMessage(conversationId, msg) {
+  try {
+    if (!conversationId || !msg?.content) {
+      console.warn('❌ appendMessage: conversationId y content requeridos');
+      return null;
+    }
 
-      console.log(`💾 saveMessage - Token: ${token?.substring(0, 8)}..., Role: ${role}, ConvId: ${conversationId}`);
+    const token = msg?.metadata?.token || msg.token;
+    if (!token) {
+      console.warn('❌ appendMessage: token requerido');
+      return null;
+    }
 
-      if (!this.cosmosAvailable) {
-        // Persistencia en memoria
-        this._memCreateConv(token, conversationId, { metadata: { userName } });
-        this._memAppendMessage(token, conversationId, { role, content: String(message).substring(0, 4000), ts });
-        console.log(`💾 Mensaje guardado en memoria`);
-        return { id: this.generateMessageId(), memory: true };
-      }
+    console.log(`💾 appendMessage - ConvId: ${conversationId}, Token: ${token.substring(0, 8)}..., Role: ${msg.role}`);
 
-      // Cosmos
-      const messageId = this.generateMessageId();
-      const messageDoc = {
-        id: messageId,
-        messageId,
-        conversationId,
-        userToken: token,
-        userName: userName || 'Usuario',
-        message: String(message).substring(0, 4000),
-        messageType, // 'user' | 'bot' | 'system'
-        timestamp: ts,
-        dateCreated: ts,
-        partitionKey: token,
-        ttl: 60 * 60 * 24 * 90,
-        documentType: 'conversation_message',
-        version: '2.2.0',
-        isMessage: true,
-        hasContent: true,
-      };
+    const userName = msg.userName || msg.metadata?.userName || `Usuario`;
+    const role = msg.role || 'user';
+    const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
 
-      console.log(`💾 Creando documento en Cosmos: ${messageId}`);
-      const { resource: createdItem } = await this.container.items.create(messageDoc);
-      console.log(`✅ Documento creado en Cosmos: ${createdItem?.id}`);
+    // ✅ CRÍTICO: Asegurar que el contenido es string válido
+    const content = String(msg.content || '').trim();
+    if (!content || content === 'undefined' || content === 'null') {
+      console.warn('❌ appendMessage: contenido inválido');
+      return null;
+    }
 
-      // Sincroniza arreglo por roles (best effort)
+    const result = await this.saveMessage(content, conversationId, token, userName, messageType);
+    console.log(`💾 appendMessage resultado:`, !!result);
+    
+    return result;
+  } catch (e) {
+    console.error('❌ appendMessage error:', e);
+    return null;
+  }
+}
+
+// 2. MÉTODO saveMessage MEJORADO en cosmosService.js
+async saveMessage(message, conversationId, token, userName = null, messageType = 'user') {
+  try {
+    if (!message || !conversationId || !token) {
+      console.warn('❌ saveMessage: parámetros requeridos faltantes');
+      return null;
+    }
+
+    const role = messageType === 'bot' ? 'assistant' : (messageType === 'system' ? 'system' : 'user');
+    const ts = DateTime.now().setZone('America/Mexico_City').toISO();
+
+    console.log(`💾 saveMessage - Token: ${token.substring(0, 8)}..., Role: ${role}, ConvId: ${conversationId}`);
+    console.log(`💾 Contenido (${message.length} chars): ${message.substring(0, 100)}...`);
+
+    if (!this.cosmosAvailable) {
+      // Persistencia en memoria
+      this._memCreateConv(token, conversationId, { metadata: { userName } });
+      const success = this._memAppendMessage(token, conversationId, { 
+        role, 
+        content: String(message).substring(0, 4000), 
+        ts 
+      });
+      console.log(`💾 Mensaje guardado en memoria: ${success}`);
+      return success ? { id: this.generateMessageId(), memory: true } : null;
+    }
+
+    // ✅ COSMOS: Estructura de documento mejorada
+    const messageId = this.generateMessageId();
+    const messageDoc = {
+      id: messageId,
+      messageId,
+      conversationId,
+      userToken: token,
+      userName: userName || 'Usuario',
+      message: String(message).substring(0, 4000), // ✅ Asegurar string válido
+      messageType, // 'user' | 'bot' | 'system'
+      timestamp: ts,
+      dateCreated: ts,
+      partitionKey: token, // ✅ CRÍTICO: Usar token como partitionKey
+      ttl: 60 * 60 * 24 * 90, // 90 días
+      documentType: 'conversation_message',
+      version: '2.2.0',
+      isMessage: true,
+      hasContent: true,
+      // ✅ NUEVO: Campos adicionales para mejor indexación
+      messageLength: String(message).length,
+      isValid: true,
+      createdBy: 'webchat',
+      channel: 'web'
+    };
+
+    console.log(`💾 Creando documento en Cosmos: ${messageId}`);
+    const { resource: createdItem } = await this.container.items.create(messageDoc);
+    console.log(`✅ Documento creado en Cosmos: ${createdItem?.id}`);
+
+    // ✅ Sincroniza arreglo por roles (best effort)
+    setImmediate(async () => {
       try {
         await this.addMessageToConversation(conversationId, token, role, message, { nombre: userName });
       } catch (e) {
         console.warn('⚠️ Sync roles falló (continuando):', e.message);
       }
+    });
 
-      // Actualiza actividad (best effort)
-      setImmediate(() => {
-        this.updateConversationActivity(conversationId, token).catch((e) =>
-          console.warn('⚠️ updateConversationActivity:', e.message)
-        );
-      });
+    // ✅ Actualiza actividad (best effort)
+    setImmediate(async () => {
+      try {
+        await this.updateConversationActivity(conversationId, token);
+      } catch (e) {
+        console.warn('⚠️ updateConversationActivity falló:', e.message);
+      }
+    });
 
-      return createdItem;
-    } catch (error) {
-      console.error('❌ Error guardando mensaje:', error.message);
-      return null;
-    }
+    return createdItem;
+  } catch (error) {
+    console.error('❌ Error guardando mensaje:', error.message);
+    console.error('❌ Error details:', { code: error.code, statusCode: error.statusCode });
+    return null;
   }
+}
+
+
 
   /** 🧹 Limpiar mensajes de conversación */
   async cleanConversationMessages(conversationId, token) {
@@ -1539,27 +1600,6 @@ _generateRecommendations(queries) {
     }
   }
 
-  /** ➕ Append universal */
-  async appendMessage(conversationId, msg) {
-    try {
-      if (!conversationId || !msg?.content) return null;
-
-      const token = msg?.metadata?.token || msg.token;
-      if (!token) {
-        console.warn('appendMessage: token requerido');
-        return null;
-      }
-
-      const userName = msg.userName || `Usuario`;
-      const role = msg.role || 'user';
-      const messageType = role === 'assistant' ? 'bot' : (role === 'system' ? 'system' : 'user');
-
-      return await this.saveMessage(msg.content, conversationId, token, userName, messageType);
-    } catch (e) {
-      console.error('appendMessage error:', e);
-      return null;
-    }
-  }
 
   /** 🔁 Actualizar actividad/counters */
   async updateConversationActivity(conversationId, token) {
