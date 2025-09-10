@@ -95,6 +95,253 @@ export async function init(req, res) {
    body: { token, conversationId?, content, CveUsuario?, NumRI?, metadata? }
    🔁 Lectura de historial por TOKEN (última conversación activa)
 ============================================================ */
+// controllers/webchatController.js - MÉTODO ASK CORREGIDO
+// controllers/webchatController.js - ENDPOINT DE DEBUG COMPLETO
+
+export async function debugComplete(req, res) {
+  try {
+    const { token } = req.query;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'token requerido' });
+    }
+
+    console.log(`🔍 DEBUG COMPLETO para token: ${token.substring(0, 8)}...`);
+
+    const debug = {
+      token: token.substring(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+      services: {
+        cosmos: cosmosAvailable(),
+        ai: aiAvailable()
+      },
+      tests: {},
+      cosmosDebug: null,
+      summary: {},
+      continuityTest: null
+    };
+
+    // 1. Test de servicios básicos
+    debug.tests.servicesAvailable = {
+      cosmos: cosmosAvailable(),
+      ai: aiAvailable(),
+      cosmosConnection: !!cosmos.container
+    };
+
+    // 2. Debug completo de Cosmos si está disponible
+    if (cosmosAvailable() && isFn(cosmos, 'debugTokenDataComplete')) {
+      console.log('🔍 Ejecutando debug completo de Cosmos...');
+      try {
+        debug.cosmosDebug = await cosmos.debugTokenDataComplete(token);
+      } catch (error) {
+        debug.cosmosDebug = { error: error.message };
+      }
+    }
+
+    // 3. Test específico de continuidad
+    console.log('🔍 Test de continuidad...');
+    debug.continuityTest = await testContinuity(token);
+
+    // 4. Resumen y recomendaciones
+    debug.summary = generateDebugSummary(debug);
+
+    return res.json({ success: true, debug });
+
+  } catch (err) {
+    console.error('❌ debugComplete error:', err);
+    return res.status(500).json({ 
+      success: false, 
+      error: err.message,
+      message: 'Error en debug completo'
+    });
+  }
+}
+
+/** 🧪 Test específico de continuidad de conversación */
+async function testContinuity(token) {
+  const test = {
+    steps: {},
+    success: false,
+    issues: [],
+    recommendations: []
+  };
+
+  try {
+    // Paso 1: Verificar última conversación
+    console.log('🧪 1. Verificando última conversación...');
+    let latestConvId = null;
+    try {
+      if (isFn(cosmos, 'getLatestConversationId')) {
+        latestConvId = await cosmos.getLatestConversationId(token);
+      }
+      test.steps.getLatestConversation = {
+        success: true,
+        conversationId: latestConvId,
+        found: !!latestConvId
+      };
+    } catch (error) {
+      test.steps.getLatestConversation = {
+        success: false,
+        error: error.message
+      };
+      test.issues.push('No se puede obtener la última conversación');
+    }
+
+    // Paso 2: Test getMessagesByToken
+    console.log('🧪 2. Test getMessagesByToken...');
+    try {
+      if (isFn(cosmos, 'getMessagesByToken')) {
+        const messages = await cosmos.getMessagesByToken(token, { limit: 10 });
+        test.steps.getMessagesByToken = {
+          success: true,
+          count: messages?.length || 0,
+          hasMessages: messages && messages.length > 0,
+          sample: messages?.slice(0, 2)?.map(m => ({
+            role: m.role,
+            preview: m.content?.substring(0, 30) + '...'
+          })) || []
+        };
+
+        if (!messages || messages.length === 0) {
+          test.issues.push('getMessagesByToken no retorna mensajes');
+        }
+      }
+    } catch (error) {
+      test.steps.getMessagesByToken = {
+        success: false,
+        error: error.message
+      };
+      test.issues.push('getMessagesByToken falla: ' + error.message);
+    }
+
+    // Paso 3: Test getConversationForOpenAIByToken
+    console.log('🧪 3. Test getConversationForOpenAIByToken...');
+    try {
+      if (isFn(cosmos, 'getConversationForOpenAIByToken')) {
+        const openaiFormat = await cosmos.getConversationForOpenAIByToken(token, true, 10);
+        test.steps.getConversationForOpenAI = {
+          success: true,
+          count: openaiFormat?.length || 0,
+          hasHistory: openaiFormat && openaiFormat.length > 0,
+          sample: openaiFormat?.slice(-2)?.map(m => ({
+            role: m.role,
+            preview: m.content?.substring(0, 30) + '...'
+          })) || []
+        };
+
+        if (!openaiFormat || openaiFormat.length === 0) {
+          test.issues.push('getConversationForOpenAIByToken no retorna historial');
+        }
+      }
+    } catch (error) {
+      test.steps.getConversationForOpenAI = {
+        success: false,
+        error: error.message
+      };
+      test.issues.push('getConversationForOpenAIByToken falla: ' + error.message);
+    }
+
+    // Paso 4: Simulación de flujo ask
+    console.log('🧪 4. Simulando flujo de ask...');
+    test.steps.askFlowSimulation = {
+      wouldWork: true,
+      issues: []
+    };
+
+    // Verificar si tendría historial
+    const hasAnyHistory = 
+      test.steps.getMessagesByToken?.hasMessages || 
+      test.steps.getConversationForOpenAI?.hasHistory;
+
+    if (!hasAnyHistory) {
+      test.steps.askFlowSimulation.wouldWork = false;
+      test.steps.askFlowSimulation.issues.push('No hay historial disponible para contexto');
+    }
+
+    // Verificar si puede crear/obtener conversación
+    if (!latestConvId) {
+      try {
+        if (isFn(cosmos, 'createOrGetConversation')) {
+          // Simular creación
+          test.steps.askFlowSimulation.canCreateConversation = true;
+        } else {
+          test.steps.askFlowSimulation.canCreateConversation = false;
+          test.steps.askFlowSimulation.issues.push('No puede crear conversación');
+        }
+      } catch (error) {
+        test.steps.askFlowSimulation.canCreateConversation = false;
+        test.steps.askFlowSimulation.issues.push('Error simulando creación de conversación');
+      }
+    }
+
+    // Evaluación final
+    test.success = test.issues.length === 0 && hasAnyHistory;
+
+    // Generar recomendaciones
+    if (!test.success) {
+      if (!hasAnyHistory) {
+        test.recommendations.push({
+          priority: 'high',
+          issue: 'Sin historial para continuidad',
+          action: 'Verificar que los mensajes se están guardando correctamente',
+          method: 'Revisar appendMessage y estructura de datos'
+        });
+      }
+
+      if (test.issues.includes('getMessagesByToken no retorna mensajes')) {
+        test.recommendations.push({
+          priority: 'critical',
+          issue: 'Método principal de obtención de historial falla',
+          action: 'Corregir getMessagesByToken',
+          method: 'Usar la versión corregida sin ORDER BY'
+        });
+      }
+    } else {
+      test.recommendations.push({
+        priority: 'info',
+        issue: 'Continuidad funcionando',
+        action: 'Sistema operativo',
+        method: 'Monitoreo continuo'
+      });
+    }
+
+  } catch (error) {
+    test.success = false;
+    test.error = error.message;
+    test.issues.push('Error general en test de continuidad: ' + error.message);
+  }
+
+  return test;
+}
+
+/** 📊 Generar resumen del debug */
+function generateDebugSummary(debug) {
+  const summary = {
+    status: 'unknown',
+    criticalIssues: [],
+    recommendations: [],
+    continuityStatus: 'unknown'
+  };
+
+  // Estado de continuidad
+  if (debug.continuityTest) {
+    summary.continuityStatus = debug.continuityTest.success ? 'working' : 'broken';
+    summary.criticalIssues.push(...debug.continuityTest.issues);
+    summary.recommendations.push(...debug.continuityTest.recommendations);
+  }
+
+  // Estado general
+  if (summary.criticalIssues.length === 0) {
+    summary.status = 'healthy';
+  } else if (summary.criticalIssues.some(issue => issue.includes('falla') || issue.includes('error'))) {
+    summary.status = 'critical';
+  } else {
+    summary.status = 'degraded';
+  }
+
+  return summary;
+}
+
 export async function ask(req, res) {
   try {
     const { content, conversationId, metadata } = req.body || {};
@@ -113,43 +360,48 @@ export async function ask(req, res) {
       return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
-    // Resolver conversationId: usar el que llegó o último por token; crear si no existe
+    // ✅ MEJORADO: Resolver conversationId con mejor lógica
     let convId = conversationId;
     console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
     
     if (!convId) {
       console.log(`🔍 Buscando última conversación por token...`);
-      convId = (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId'))
-        ? (await cosmos.getLatestConversationId(token))
-        : null;
+      try {
+        if (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId')) {
+          convId = await cosmos.getLatestConversationId(token);
+        }
+      } catch (error) {
+        console.warn('⚠️ Error obteniendo última conversación:', error.message);
+        convId = null;
+      }
       console.log(`🎯 ConversationId encontrado: ${convId || 'null'}`);
 
       if (!convId) {
         console.log(`➕ Creando nueva conversación...`);
-        const created = (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation'))
-          ? await cosmos.createOrGetConversation({ 
+        try {
+          if (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation')) {
+            const created = await cosmos.createOrGetConversation({ 
               channel: 'web', 
               token, 
               metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
-            })
-          : null;
-        convId = created?.id || `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            });
+            convId = created?.id;
+          }
+        } catch (error) {
+          console.warn('⚠️ Error creando conversación:', error.message);
+        }
+        
+        if (!convId) {
+          convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        }
         console.log(`✅ Nueva conversación creada: ${convId}`);
       }
     }
 
     // Guardar mensaje del usuario
     console.log(`💾 === GUARDANDO MENSAJE DEL USUARIO ===`);
-    console.log(`    - ConversationId: ${convId}`);
-    console.log(`    - Token: ${token?.substring(0, 8)}...`);
-    console.log(`    - Content: "${content?.substring(0, 100)}..."`);
-    console.log(`    - CveUsuario: ${CveUsuario}`);
-    console.log(`    - NumRI: ${NumRI}`);
-    
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        console.log(`💾 Llamando cosmos.appendMessage para usuario...`);
-        
         const userMessageData = {
           role: 'user',
           content,
@@ -159,63 +411,104 @@ export async function ask(req, res) {
           token: token
         };
         
-        console.log(`💾 Datos del mensaje:`, {
-          role: userMessageData.role,
-          contentLength: userMessageData.content?.length,
-          hasToken: !!userMessageData.token,
-          timestamp: userMessageData.ts
-        });
-        
         const savedUserMsg = await cosmos.appendMessage(convId, userMessageData);
-        
-        console.log(`💾 Resultado appendMessage usuario:`, {
-          success: !!savedUserMsg,
-          id: savedUserMsg?.id,
-          memory: savedUserMsg?.memory,
-          type: typeof savedUserMsg
-        });
-        
-        if (savedUserMsg) {
-          console.log(`✅ Mensaje del usuario guardado exitosamente`);
-        } else {
-          console.warn(`⚠️ appendMessage retornó: ${savedUserMsg}`);
-        }
-      } else {
-        console.warn('⚠️ cosmos.appendMessage no está disponible como función');
-        console.log('🔍 Verificando cosmos:', {
-          cosmosExists: !!cosmos,
-          cosmosType: typeof cosmos,
-          appendMessageType: typeof cosmos?.appendMessage,
-          cosmosAvailable: cosmosAvailable()
-        });
+        console.log(`✅ Mensaje del usuario guardado:`, !!savedUserMsg);
       }
     } catch (error) {
       console.error('❌ Error guardando mensaje usuario:', error.message);
-      console.error('❌ Error completo:', error);
-      console.error('❌ Stack trace:', error.stack);
     }
 
     // Info de usuario para AI
     const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
-    console.log(`👤 Info de usuario para IA:`, userInfo);
 
-    // Historial usando sólo token (última conversación activa)
+    // ✅ CRÍTICO: Obtener historial COMPLETO por token con múltiples métodos de fallback
     let historial = [];
-    console.log(`📚 === OBTENIENDO HISTORIAL ===`);
+    console.log(`📚 === OBTENIENDO HISTORIAL COMPLETO ===`);
+    
     try {
+      // MÉTODO 1: Intentar getConversationForOpenAIByToken
       if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
-        console.log(`📚 Llamando getConversationForOpenAIByToken...`);
-        historial = await cosmos.getConversationForOpenAIByToken(token, true, 10);
-        console.log(`📚 Historial obtenido:`, {
-          length: historial?.length || 0,
-          sample: historial?.slice(0, 2)?.map(msg => `${msg.role}: ${msg.content?.substring(0, 30)}...`)
-        });
-      } else {
-        console.warn('⚠️ getConversationForOpenAIByToken no disponible');
+        console.log(`📚 Método 1: getConversationForOpenAIByToken...`);
+        historial = await cosmos.getConversationForOpenAIByToken(token, true, 15);
+        console.log(`📚 Historial método 1: ${historial?.length || 0} mensajes`);
       }
+      
+      // MÉTODO 2: Si no hay historial, usar getMessagesByToken (versión corregida)
+      if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
+        console.log(`📚 Método 2: getMessagesByToken...`);
+        const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
+        if (messages && messages.length > 0) {
+          historial = messages.map(m => ({ role: m.role, content: m.content }));
+          console.log(`📚 Historial método 2: ${historial.length} mensajes`);
+        }
+      }
+      
+      // MÉTODO 3: Si aún no hay historial, usar conversación específica
+      if ((!historial || historial.length === 0) && cosmosAvailable() && convId && isFn(cosmos, 'getConversationForOpenAI')) {
+        console.log(`📚 Método 3: getConversationForOpenAI específica...`);
+        historial = await cosmos.getConversationForOpenAI(convId, token, true);
+        console.log(`📚 Historial método 3: ${historial?.length || 0} mensajes`);
+      }
+      
+      // MÉTODO 4: Fallback con query directo
+      if ((!historial || historial.length === 0) && cosmosAvailable()) {
+        console.log(`📚 Método 4: Query directo de emergencia...`);
+        try {
+          const fallbackQuery = {
+            query: `
+              SELECT c.message, c.messageType, c.timestamp
+              FROM c
+              WHERE c.userToken = @token
+                AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+                AND IS_DEFINED(c.message)
+                AND c.message != ''
+            `,
+            parameters: [{ name: '@token', value: token }]
+          };
+
+          const { resources } = await cosmos.container.items
+            .query(fallbackQuery, { partitionKey: token })
+            .fetchAll();
+
+          if (resources && resources.length > 0) {
+            const sortedMessages = resources
+              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+              .slice(-15);
+            
+            historial = sortedMessages.map(m => ({
+              role: m.messageType === 'bot' ? 'assistant' : (m.messageType === 'system' ? 'system' : 'user'),
+              content: m.message
+            }));
+            console.log(`📚 Historial método 4: ${historial.length} mensajes`);
+          }
+        } catch (directQueryError) {
+          console.warn('⚠️ Query directo falló:', directQueryError.message);
+        }
+      }
+      
     } catch (error) {
-      console.error('❌ Error obteniendo historial (token):', error.message);
+      console.error('❌ Error obteniendo historial:', error.message);
       historial = [];
+    }
+
+    // Log del historial para debug
+    if (historial && historial.length > 0) {
+      console.log(`📚 === HISTORIAL FINAL ===`);
+      console.log(`📚 Total mensajes: ${historial.length}`);
+      console.log(`📚 Primer mensaje: ${historial[0]?.role}: ${historial[0]?.content?.substring(0, 50)}...`);
+      console.log(`📚 Último mensaje: ${historial[historial.length - 1]?.role}: ${historial[historial.length - 1]?.content?.substring(0, 50)}...`);
+      
+      // Mostrar contexto reciente
+      const recentContext = historial.slice(-5);
+      console.log(`📚 Contexto reciente (últimos 5):`);
+      recentContext.forEach((msg, idx) => {
+        console.log(`   ${idx + 1}. ${msg.role}: ${msg.content?.substring(0, 80)}...`);
+      });
+    } else {
+      console.warn(`⚠️ === NO SE ENCONTRÓ HISTORIAL ===`);
+      console.warn(`⚠️ Token: ${token?.substring(0, 8)}...`);
+      console.warn(`⚠️ ConversationId: ${convId}`);
+      console.warn(`⚠️ Cosmos disponible: ${cosmosAvailable()}`);
     }
 
     // Procesar con la IA
@@ -224,24 +517,17 @@ export async function ask(req, res) {
       contentLength: content?.length,
       historialLength: historial?.length,
       userToken: token?.substring(0, 8) + '...',
-      conversationId: convId
+      conversationId: convId,
+      hasContext: historial && historial.length > 0
     });
     
     const response = await ai.procesarMensaje(
       content,
-      historial,
+      historial || [], // Asegurar que siempre sea array
       token,
       userInfo,
       convId
     );
-
-    console.log(`🤖 Respuesta de IA recibida:`, {
-      type: typeof response,
-      isString: typeof response === 'string',
-      hasContent: !!(response?.content),
-      hasText: !!(response?.text),
-      responseType: response?.type
-    });
 
     let replyText = '';
     let citations = null;
@@ -259,22 +545,10 @@ export async function ask(req, res) {
       replyText = 'No se pudo procesar la respuesta';
     }
 
-    console.log(`🤖 Texto de respuesta procesado:`, {
-      length: replyText?.length || 0,
-      preview: replyText?.substring(0, 100) + '...',
-      hasCitations: !!citations
-    });
-
     // Guardar respuesta del asistente
     console.log(`💾 === GUARDANDO RESPUESTA DEL ASISTENTE ===`);
-    console.log(`    - ConversationId: ${convId}`);
-    console.log(`    - Response length: ${replyText?.length || 0}`);
-    console.log(`    - Has citations: ${!!citations}`);
-    
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        console.log(`💾 Llamando cosmos.appendMessage para asistente...`);
-        
         const assistantMessageData = {
           role: 'assistant',
           content: replyText,
@@ -285,41 +559,17 @@ export async function ask(req, res) {
           metadata: { token, CveUsuario, NumRI, toolsUsed: response?.metadata?.toolsUsed || null }
         };
         
-        console.log(`💾 Datos del mensaje del asistente:`, {
-          role: assistantMessageData.role,
-          contentLength: assistantMessageData.content?.length,
-          citationsLength: assistantMessageData.citations?.length || 0,
-          hasToken: !!assistantMessageData.token,
-          timestamp: assistantMessageData.ts
-        });
-        
         const savedAssistantMsg = await cosmos.appendMessage(convId, assistantMessageData);
-        
-        console.log(`💾 Resultado appendMessage asistente:`, {
-          success: !!savedAssistantMsg,
-          id: savedAssistantMsg?.id,
-          memory: savedAssistantMsg?.memory,
-          type: typeof savedAssistantMsg
-        });
-        
-        if (savedAssistantMsg) {
-          console.log(`✅ Mensaje del asistente guardado exitosamente`);
-        } else {
-          console.warn(`⚠️ appendMessage asistente retornó: ${savedAssistantMsg}`);
-        }
-      } else {
-        console.warn('⚠️ cosmos.appendMessage no está disponible para asistente');
+        console.log(`✅ Mensaje del asistente guardado:`, !!savedAssistantMsg);
       }
     } catch (error) {
       console.error('❌ Error guardando respuesta del asistente:', error.message);
-      console.error('❌ Error completo:', error);
-      console.error('❌ Stack trace:', error.stack);
     }
 
     console.log(`✅ === ASK COMPLETADO EXITOSAMENTE ===`);
     console.log(`    - ConversationId final: ${convId}`);
     console.log(`    - Respuesta length: ${replyText?.length}`);
-    console.log(`    - Citations: ${citations ? 'sí' : 'no'}`);
+    console.log(`    - Historial usado: ${historial?.length || 0} mensajes`);
 
     return res.json({
       success: true,
@@ -328,14 +578,14 @@ export async function ask(req, res) {
       conversationId: convId,
       metadata: {
         toolsUsed: response?.metadata?.toolsUsed || null,
-        usage: response?.metadata?.usage || null
+        usage: response?.metadata?.usage || null,
+        contextLength: historial?.length || 0 // ✅ NUEVO: info de contexto
       }
     });
   } catch (err) {
     console.error('❌ === ASK ERROR GENERAL ===');
     console.error('❌ Error:', err.message);
     console.error('❌ Stack:', err.stack);
-    console.error('❌ Error completo:', err);
 
     if (err.message && (err.message.includes('Token expirado') || err.message.includes('401'))) {
       return res.status(401).json({

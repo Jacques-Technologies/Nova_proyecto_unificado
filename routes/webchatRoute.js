@@ -1,10 +1,10 @@
-// src/routes/webchatRoute.js
+// src/routes/webchatRoute.js - RUTAS ACTUALIZADAS
 import express from 'express';
 import * as webchatController from '../controllers/webchatController.js';
 
 const router = express.Router();
 
-// Rutas WebChat (solo los endpoints, sin repetir /webchat)
+// Rutas WebChat principales
 router.get('/init', webchatController.init);
 router.post('/init', webchatController.init);
 
@@ -20,11 +20,12 @@ router.post('/clear', webchatController.clear);
 router.get('/conversations', webchatController.conversations);
 router.patch('/conversation/:id', webchatController.renameConversation);
 
-// ➕ resumen
+// Utilidades
 router.get('/summary', webchatController.summary);
 
-// ➕ debug endpoints para diagnosticar problemas (SOLO TOKEN)
-router.get('/debug', webchatController.debugToken);
-router.get('/deep-debug', webchatController.deepDebug); // ← NUEVA LÍNEA
+// 🔍 Endpoints de debug (ordenados por nivel de detalle)
+router.get('/debug', webchatController.debugToken);           // Debug básico
+router.get('/deep-debug', webchatController.deepDebug);       // Debug intermedio  
+router.get('/debug-complete', webchatController.debugComplete); // ✅ NUEVO: Debug completo con test de continuidad
 
 export default router;

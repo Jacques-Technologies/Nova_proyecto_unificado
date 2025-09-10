@@ -570,6 +570,9 @@ export default class CosmosService {
 // Reemplaza el método getMessagesByToken en cosmosService.js
 // Versión sin ORDER BY problemático
 
+// services/cosmosService.js - MÉTODO getMessagesByToken CORREGIDO
+
+/** 📜 Obtener mensajes por token (conversación más reciente) - VERSIÓN CORREGIDA */
 async getMessagesByToken(token, { limit = 30, before = null } = {}) {
   try {
     console.log(`🔍 getMessagesByToken - Token: ${token?.substring(0, 8)}..., Limit: ${limit}`);
@@ -593,32 +596,14 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
       return result;
     }
 
-    // 🔎 Cosmos: conteo básico para diagnóstico
-    console.log('🔍 Haciendo conteo de documentos...');
-    const countQuery = {
-      query: `SELECT VALUE COUNT(1) FROM c WHERE c.userToken = @token`,
-      parameters: [{ name: '@token', value: token }]
-    };
-
-    const { resources: countResources } = await this.container.items
-      .query(countQuery, { partitionKey: token })
-      .fetchAll();
+    // ✅ MÉTODO 1: Query básico SIN ORDER BY para evitar error de índice compuesto
+    console.log('🔍 Ejecutando query básico sin ORDER BY...');
     
-    const totalDocs = countResources[0] || 0;
-    console.log(`📊 Total documentos para token: ${totalDocs}`);
-
-    if (totalDocs === 0) {
-      console.warn('⚠️ No hay documentos para este token');
-      return [];
-    }
-
-    // 🔎 MÉTODO 1: Query sin ORDER BY - buscar por documentType
-    console.log('🔍 Query por documentType sin ORDER BY...');
     let queryText = `
       SELECT c.message, c.messageType, c.timestamp, c.conversationId
       FROM c
       WHERE c.userToken = @token
-        AND c.documentType = 'conversation_message'
+        AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
         AND IS_DEFINED(c.message)
         AND c.message != ''
     `;
@@ -630,9 +615,8 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
       params.push({ name: '@before', value: before });
     }
 
-    // NO incluir ORDER BY para evitar error de índice compuesto
-
-    console.log(`🔍 Ejecutando query sin ORDER BY...`);
+    // ✅ NO incluir ORDER BY para evitar error de índice compuesto
+    console.log(`🔍 Query sin ORDER BY: ${queryText}`);
 
     const { resources } = await this.container.items
       .query({ query: queryText, parameters: params }, { partitionKey: token })
@@ -642,116 +626,157 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
 
     let result = [];
     if (resources && resources.length > 0) {
-      // Ordenar manualmente en JavaScript
+      // ✅ Ordenar manualmente en JavaScript después de la consulta
+      console.log(`🔧 Ordenando ${resources.length} mensajes manualmente...`);
+      
       const sortedResources = resources
         .filter(item => item.message && item.message.trim() !== '')
-        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        .sort((a, b) => {
+          // Ordenar por timestamp ascendente
+          const timeA = new Date(a.timestamp);
+          const timeB = new Date(b.timestamp);
+          return timeA - timeB;
+        });
 
-      result = sortedResources
-        .map((item) => ({
-          role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-          content: item.message,
-          ts: item.timestamp,
-        }))
-        .slice(-limit);
+      console.log(`📊 Mensajes después de filtro y ordenamiento: ${sortedResources.length}`);
+
+      // Tomar los últimos N mensajes
+      const recentMessages = sortedResources.slice(-limit);
+      
+      result = recentMessages.map((item) => ({
+        role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+        content: item.message,
+        ts: item.timestamp,
+      }));
+
+      console.log(`✅ Resultado final: ${result.length} mensajes`);
+      
+      // Debug: mostrar rango de fechas
+      if (result.length > 0) {
+        console.log(`📅 Rango de mensajes: ${result[0].ts} -> ${result[result.length - 1].ts}`);
+      }
     }
 
-    // 🔎 MÉTODO 2: Si no hay resultados, query más simple
+    // ✅ MÉTODO 2: Fallback con query más simple si no hay resultados
     if (result.length === 0) {
-      console.log('🔍 Query simple por messageType...');
+      console.log('🔍 Fallback: Query más simple...');
       
       const fallbackQuery = `
         SELECT c.message, c.messageType, c.timestamp
         FROM c
         WHERE c.userToken = @token
-          AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
           AND IS_DEFINED(c.message)
           AND c.message != ''
       `;
 
-      const { resources: fallbackResources } = await this.container.items
-        .query({ 
-          query: fallbackQuery, 
-          parameters: [{ name: '@token', value: token }] 
-        }, { partitionKey: token })
-        .fetchAll();
+      try {
+        const { resources: fallbackResources } = await this.container.items
+          .query({ 
+            query: fallbackQuery, 
+            parameters: [{ name: '@token', value: token }] 
+          }, { partitionKey: token })
+          .fetchAll();
 
-      console.log(`📊 Query simple result: ${fallbackResources?.length || 0} items`);
+        console.log(`📊 Fallback query result: ${fallbackResources?.length || 0} items`);
 
-      if (fallbackResources && fallbackResources.length > 0) {
-        // Ordenar manualmente
-        const sortedFallback = fallbackResources
-          .filter(item => item.message && item.message.trim() !== '')
-          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        if (fallbackResources && fallbackResources.length > 0) {
+          // Filtrar por tipo de mensaje válido y ordenar
+          const validMessages = fallbackResources
+            .filter(item => 
+              item.message && 
+              item.message.trim() !== '' && 
+              item.messageType &&
+              ['user', 'bot', 'system'].includes(item.messageType)
+            )
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-        result = sortedFallback
-          .map((item) => ({
-            role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
-            content: item.message,
-            ts: item.timestamp,
-          }))
-          .slice(-limit);
+          result = validMessages
+            .slice(-limit)
+            .map((item) => ({
+              role: item.messageType === 'bot' ? 'assistant' : (item.messageType === 'system' ? 'system' : 'user'),
+              content: item.message,
+              ts: item.timestamp,
+            }));
+
+          console.log(`✅ Fallback resultado: ${result.length} mensajes`);
+        }
+      } catch (fallbackError) {
+        console.error('❌ Error en fallback query:', fallbackError.message);
       }
     }
 
-    // 🔎 MÉTODO 3: Diagnóstico completo si aún no hay resultados
+    // ✅ MÉTODO 3: Diagnóstico si aún no hay resultados
     if (result.length === 0) {
-      console.log('🔍 Diagnóstico completo...');
+      console.log('🔍 Diagnóstico: verificando datos...');
       
-      const diagnosticQuery = `
-        SELECT c.message, c.messageType, c.timestamp, c.documentType
-        FROM c
-        WHERE c.userToken = @token
-      `;
+      try {
+        const diagnosticQuery = `
+          SELECT TOP 10 c.message, c.messageType, c.timestamp, c.documentType
+          FROM c
+          WHERE c.userToken = @token
+        `;
 
-      const { resources: diagResources } = await this.container.items
-        .query({ 
-          query: diagnosticQuery, 
-          parameters: [{ name: '@token', value: token }] 
-        }, { partitionKey: token })
-        .fetchAll();
+        const { resources: diagResources } = await this.container.items
+          .query({ 
+            query: diagnosticQuery, 
+            parameters: [{ name: '@token', value: token }] 
+          }, { partitionKey: token })
+          .fetchAll();
 
-      console.log(`🔍 Diagnóstico: ${diagResources?.length || 0} documentos totales`);
-      
-      if (diagResources && diagResources.length > 0) {
-        console.log('📊 Primeros 5 documentos:');
-        diagResources.slice(0, 5).forEach((doc, idx) => {
-          console.log(`   ${idx + 1}. DocumentType: ${doc.documentType}, MessageType: ${doc.messageType}, HasMessage: ${!!doc.message}`);
-          if (doc.message) {
-            console.log(`      Message: ${doc.message.substring(0, 50)}...`);
+        console.log(`🔍 Diagnóstico: ${diagResources?.length || 0} documentos encontrados`);
+        
+        if (diagResources && diagResources.length > 0) {
+          console.log('📊 Tipos de documento encontrados:');
+          const docTypes = {};
+          const msgTypes = {};
+          
+          diagResources.forEach((doc, idx) => {
+            docTypes[doc.documentType] = (docTypes[doc.documentType] || 0) + 1;
+            if (doc.messageType) msgTypes[doc.messageType] = (msgTypes[doc.messageType] || 0) + 1;
+            
+            if (idx < 3) {
+              console.log(`   ${idx + 1}. DocumentType: ${doc.documentType}, MessageType: ${doc.messageType}, HasMessage: ${!!doc.message}`);
+            }
+          });
+          
+          console.log('📊 Resumen - DocumentTypes:', docTypes);
+          console.log('📊 Resumen - MessageTypes:', msgTypes);
+
+          // Intentar extraer cualquier mensaje válido
+          const anyValidMessages = diagResources
+            .filter(doc => doc.message && doc.message.trim() !== '' && doc.messageType)
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+            .slice(-limit)
+            .map(doc => ({
+              role: doc.messageType === 'bot' ? 'assistant' : (doc.messageType === 'system' ? 'system' : 'user'),
+              content: doc.message,
+              ts: doc.timestamp,
+            }));
+
+          if (anyValidMessages.length > 0) {
+            result = anyValidMessages;
+            console.log(`📖 Extraídos del diagnóstico: ${result.length} mensajes`);
           }
-        });
-
-        // Extraer cualquier mensaje válido
-        const validFromDiag = diagResources
-          .filter(doc => doc.message && doc.message.trim() !== '' && doc.messageType)
-          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-          .map(doc => ({
-            role: doc.messageType === 'bot' ? 'assistant' : (doc.messageType === 'system' ? 'system' : 'user'),
-            content: doc.message,
-            ts: doc.timestamp,
-          }));
-
-        if (validFromDiag.length > 0) {
-          result = validFromDiag.slice(-limit);
-          console.log(`📖 Extraídos del diagnóstico: ${result.length} mensajes`);
         }
+      } catch (diagError) {
+        console.error('❌ Error en diagnóstico:', diagError.message);
       }
     }
 
     console.log(`✅ getMessagesByToken resultado final: ${result.length} mensajes`);
     
     if (result.length > 0) {
-      console.log(`📝 Rango de mensajes: ${result[0].role} -> ${result[result.length - 1].role}`);
-      console.log(`📝 Primer mensaje: ${result[0].content.substring(0, 50)}...`);
+      console.log(`📝 Primer mensaje: ${result[0].role}: ${result[0].content?.substring(0, 50)}...`);
+      console.log(`📝 Último mensaje: ${result[result.length - 1].role}: ${result[result.length - 1].content?.substring(0, 50)}...`);
     } else {
-      console.log(`⚠️ No se encontraron mensajes válidos`);
+      console.log(`⚠️ No se encontraron mensajes válidos para token: ${token?.substring(0, 8)}...`);
     }
     
     return result;
 
   } catch (e) {
     console.error('❌ getMessagesByToken error:', e);
+    console.error('❌ Error stack:', e.stack);
     return [];
   }
 }
@@ -781,6 +806,370 @@ async getMessagesByToken(token, { limit = 30, before = null } = {}) {
       return [];
     }
   }
+
+  // services/cosmosService.js - MÉTODO DE DEBUG MEJORADO
+
+/** 🔍 Debug completo de datos por token */
+async debugTokenDataComplete(token) {
+  if (!token) return { error: 'Token requerido' };
+  
+  if (!this.cosmosAvailable) {
+    const bucket = this._memEnsure(token);
+    return { 
+      error: 'Cosmos no disponible', 
+      memoryData: {
+        hasData: this.memory.has(token),
+        conversations: bucket.conversations.size,
+        totalMessages: Array.from(bucket.conversations.values()).reduce((sum, conv) => sum + conv.messages.length, 0)
+      }
+    };
+  }
+
+  try {
+    console.log(`🔍 Debug completo para token: ${token.substring(0, 8)}...`);
+
+    const debug = {
+      token: token.substring(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+      queries: {},
+      analysis: {},
+      recommendations: []
+    };
+
+    // 1. Conteo total
+    console.log('📊 1. Conteo total de documentos...');
+    try {
+      const countQuery = {
+        query: `SELECT VALUE COUNT(1) FROM c WHERE c.userToken = @token`,
+        parameters: [{ name: '@token', value: token }]
+      };
+
+      const { resources: countResources } = await this.container.items
+        .query(countQuery, { partitionKey: token })
+        .fetchAll();
+
+      debug.queries.totalDocuments = {
+        success: true,
+        count: countResources[0] || 0
+      };
+    } catch (error) {
+      debug.queries.totalDocuments = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 2. Análisis por tipo de documento
+    console.log('📊 2. Análisis por tipo de documento...');
+    try {
+      const typeQuery = {
+        query: `
+          SELECT c.documentType, COUNT(1) as count
+          FROM c
+          WHERE c.userToken = @token
+          GROUP BY c.documentType
+        `,
+        parameters: [{ name: '@token', value: token }]
+      };
+
+      const { resources: typeResources } = await this.container.items
+        .query(typeQuery, { partitionKey: token })
+        .fetchAll();
+
+      debug.queries.documentTypes = {
+        success: true,
+        types: typeResources || []
+      };
+    } catch (error) {
+      debug.queries.documentTypes = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 3. Análisis por tipo de mensaje
+    console.log('📊 3. Análisis por tipo de mensaje...');
+    try {
+      const msgTypeQuery = {
+        query: `
+          SELECT c.messageType, COUNT(1) as count
+          FROM c
+          WHERE c.userToken = @token
+            AND IS_DEFINED(c.messageType)
+          GROUP BY c.messageType
+        `,
+        parameters: [{ name: '@token', value: token }]
+      };
+
+      const { resources: msgTypeResources } = await this.container.items
+        .query(msgTypeQuery, { partitionKey: token })
+        .fetchAll();
+
+      debug.queries.messageTypes = {
+        success: true,
+        types: msgTypeResources || []
+      };
+    } catch (error) {
+      debug.queries.messageTypes = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 4. Mensajes más recientes (sin ORDER BY)
+    console.log('📊 4. Mensajes recientes...');
+    try {
+      const recentQuery = {
+        query: `
+          SELECT TOP 10 c.message, c.messageType, c.timestamp, c.conversationId, c.documentType
+          FROM c
+          WHERE c.userToken = @token
+            AND IS_DEFINED(c.message)
+            AND c.message != ''
+        `,
+        parameters: [{ name: '@token', value: token }]
+      };
+
+      const { resources: recentResources } = await this.container.items
+        .query(recentQuery, { partitionKey: token })
+        .fetchAll();
+
+      // Ordenar manualmente
+      const sortedRecent = (recentResources || [])
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, 5);
+
+      debug.queries.recentMessages = {
+        success: true,
+        count: recentResources?.length || 0,
+        sample: sortedRecent.map(m => ({
+          messageType: m.messageType,
+          timestamp: m.timestamp,
+          conversationId: m.conversationId,
+          documentType: m.documentType,
+          messagePreview: m.message?.substring(0, 50) + '...'
+        }))
+      };
+    } catch (error) {
+      debug.queries.recentMessages = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 5. Test del método getMessagesByToken
+    console.log('📊 5. Test de getMessagesByToken...');
+    try {
+      const messages = await this.getMessagesByToken(token, { limit: 10 });
+      debug.queries.getMessagesByTokenTest = {
+        success: true,
+        count: messages?.length || 0,
+        sample: messages?.slice(0, 3)?.map(m => ({
+          role: m.role,
+          contentPreview: m.content?.substring(0, 50) + '...',
+          timestamp: m.ts
+        })) || []
+      };
+    } catch (error) {
+      debug.queries.getMessagesByTokenTest = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // 6. Test de conversación activa
+    console.log('📊 6. Test de conversación activa...');
+    try {
+      const activeConvId = await this.getLatestConversationId(token);
+      debug.queries.latestConversation = {
+        success: true,
+        conversationId: activeConvId,
+        found: !!activeConvId
+      };
+
+      if (activeConvId) {
+        try {
+          const convMessages = await this.getConversationForOpenAI(activeConvId, token, true);
+          debug.queries.conversationMessages = {
+            success: true,
+            count: convMessages?.length || 0,
+            sample: convMessages?.slice(-3)?.map(m => ({
+              role: m.role,
+              contentPreview: m.content?.substring(0, 50) + '...'
+            })) || []
+          };
+        } catch (convError) {
+          debug.queries.conversationMessages = {
+            success: false,
+            error: convError.message
+          };
+        }
+      }
+    } catch (error) {
+      debug.queries.latestConversation = {
+        success: false,
+        error: error.message
+      };
+    }
+
+    // Análisis y recomendaciones
+    debug.analysis = this._analyzeDebugData(debug.queries);
+    debug.recommendations = this._generateRecommendations(debug.queries);
+
+    return debug;
+
+  } catch (error) {
+    return { 
+      error: error.message, 
+      stack: error.stack,
+      token: token.substring(0, 8) + '...'
+    };
+  }
+}
+
+/** 📊 Analizar datos de debug */
+_analyzeDebugData(queries) {
+  const analysis = {
+    hasData: false,
+    hasMessages: false,
+    hasConversations: false,
+    primaryIssues: [],
+    dataQuality: 'unknown'
+  };
+
+  if (queries.totalDocuments?.success) {
+    analysis.hasData = queries.totalDocuments.count > 0;
+  }
+
+  if (queries.messageTypes?.success) {
+    const msgTypes = queries.messageTypes.types || [];
+    analysis.hasMessages = msgTypes.some(type => ['user', 'bot', 'system'].includes(type.messageType));
+    
+    const totalMessages = msgTypes.reduce((sum, type) => sum + (type.count || 0), 0);
+    if (totalMessages > 0) {
+      analysis.messageStats = {
+        total: totalMessages,
+        types: msgTypes.reduce((acc, type) => {
+          acc[type.messageType] = type.count;
+          return acc;
+        }, {})
+      };
+    }
+  }
+
+  if (queries.documentTypes?.success) {
+    const docTypes = queries.documentTypes.types || [];
+    analysis.hasConversations = docTypes.some(type => 
+      type.documentType === 'conversation_info' || 
+      type.documentType === 'conversation_message'
+    );
+    
+    analysis.documentStats = docTypes.reduce((acc, type) => {
+      acc[type.documentType] = type.count;
+      return acc;
+    }, {});
+  }
+
+  // Evaluar calidad de datos
+  if (!analysis.hasData) {
+    analysis.dataQuality = 'no_data';
+    analysis.primaryIssues.push('No hay documentos para este token');
+  } else if (!analysis.hasMessages) {
+    analysis.dataQuality = 'no_messages';
+    analysis.primaryIssues.push('Hay documentos pero no mensajes válidos');
+  } else if (!analysis.hasConversations) {
+    analysis.dataQuality = 'no_conversations';
+    analysis.primaryIssues.push('Hay mensajes pero no estructura de conversaciones');
+  } else {
+    analysis.dataQuality = 'good';
+  }
+
+  // Verificar métodos funcionando
+  if (queries.getMessagesByTokenTest?.success) {
+    if (queries.getMessagesByTokenTest.count === 0) {
+      analysis.primaryIssues.push('getMessagesByToken no retorna mensajes');
+    }
+  } else {
+    analysis.primaryIssues.push('getMessagesByToken falla: ' + queries.getMessagesByTokenTest?.error);
+  }
+
+  if (queries.latestConversation?.success) {
+    if (!queries.latestConversation.found) {
+      analysis.primaryIssues.push('No se encuentra conversación activa');
+    }
+  } else {
+    analysis.primaryIssues.push('getLatestConversationId falla: ' + queries.latestConversation?.error);
+  }
+
+  return analysis;
+}
+
+/** 💡 Generar recomendaciones basadas en el análisis */
+_generateRecommendations(queries) {
+  const recommendations = [];
+
+  // Recomendaciones basadas en problemas encontrados
+  if (queries.totalDocuments?.success && queries.totalDocuments.count === 0) {
+    recommendations.push({
+      priority: 'high',
+      issue: 'No hay datos',
+      action: 'Verificar que el token esté siendo usado correctamente al guardar mensajes',
+      technical: 'Revisar que appendMessage esté recibiendo el token correctamente'
+    });
+  }
+
+  if (queries.getMessagesByTokenTest?.success && queries.getMessagesByTokenTest.count === 0) {
+    if (queries.totalDocuments?.count > 0) {
+      recommendations.push({
+        priority: 'high',
+        issue: 'Datos existen pero getMessagesByToken no los encuentra',
+        action: 'Problema en la query o filtros del método getMessagesByToken',
+        technical: 'Revisar filtros de messageType y documentType en la query'
+      });
+    }
+  }
+
+  if (queries.getMessagesByTokenTest?.success === false) {
+    recommendations.push({
+      priority: 'critical',
+      issue: 'getMessagesByToken falla completamente',
+      action: 'Error en la implementación del método',
+      technical: 'Revisar sintaxis de query y manejo de errores: ' + queries.getMessagesByTokenTest?.error
+    });
+  }
+
+  if (queries.latestConversation?.success && !queries.latestConversation.found) {
+    recommendations.push({
+      priority: 'medium',
+      issue: 'No hay conversación activa',
+      action: 'Verificar creación de conversation_info documents',
+      technical: 'Asegurar que createOrGetConversation esté funcionando'
+    });
+  }
+
+  if (queries.recentMessages?.success && queries.recentMessages.count === 0) {
+    if (queries.totalDocuments?.count > 0) {
+      recommendations.push({
+        priority: 'medium',
+        issue: 'Hay documentos pero no tienen campo message',
+        action: 'Verificar estructura de documentos guardados',
+        technical: 'Revisar que appendMessage esté guardando el campo message correctamente'
+      });
+    }
+  }
+
+  // Recomendaciones generales
+  if (recommendations.length === 0) {
+    recommendations.push({
+      priority: 'info',
+      issue: 'Sistema funcionando correctamente',
+      action: 'Continuar monitoreando',
+      technical: 'Datos y métodos funcionando como esperado'
+    });
+  }
+
+  return recommendations;
+}
 
   /** 🔍 Método de diagnóstico para verificar datos en Cosmos */
   async debugTokenData(token) {
