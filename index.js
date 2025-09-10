@@ -29,11 +29,9 @@ async function startServer() {
   
   const app = express();
   
-  // ✅ CORS configurado correctamente para producción
+  // ✅ CORS configurado para permitir cualquier origen
   app.use(cors({
-    origin: [
-      'https://frontendnova.onrender.com'  // Tu frontend en producción
-    ],
+    origin: '*',  // Permite cualquier origen
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -133,7 +131,7 @@ async function startServer() {
   // Arranque del servidor
   app.listen(PORT, () => {
     console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
-    console.log(`🌐 Frontend permitido: https://frontendnova.onrender.com`);
+    console.log(`🌐 CORS permite cualquier origen (*)`);
     console.log(`📨 Endpoint Teams: http://localhost:${PORT}/api/messages`);
     console.log(`📄 Endpoints PDF/Word: POST http://localhost:${PORT}/api/sendPdf | /api/sendWord`);
     console.log(`💬 Endpoints Webchat:`);
