@@ -342,6 +342,9 @@ function generateDebugSummary(debug) {
   return summary;
 }
 
+// controllers/webchatController.js - PARCHE CRÍTICO para el método ask
+// Reemplaza la sección de resolución de conversationId
+
 export async function ask(req, res) {
   try {
     const { content, conversationId, metadata } = req.body || {};
@@ -360,42 +363,125 @@ export async function ask(req, res) {
       return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
-    // ✅ MEJORADO: Resolver conversationId con mejor lógica
+    // ✅ CRÍTICO: Resolución mejorada de conversationId con múltiples métodos
     let convId = conversationId;
     console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
     
-    if (!convId) {
-      console.log(`🔍 Buscando última conversación por token...`);
+    if (!convId && cosmosAvailable()) {
+      console.log(`🔍 Buscando conversación existente por token...`);
+      
+      // MÉTODO 1: getLatestConversationId mejorado
       try {
-        if (cosmosAvailable() && isFn(cosmos, 'getLatestConversationId')) {
-          convId = await cosmos.getLatestConversationId(token);
+        convId = await cosmos.getLatestConversationId(token);
+        console.log(`🎯 getLatestConversationId result: ${convId || 'null'}`);
+      } catch (error) {
+        console.warn('⚠️ Error en getLatestConversationId:', error.message);
+      }
+
+      // MÉTODO 2: Query directo para encontrar conversación activa
+      if (!convId) {
+        console.log(`🔍 Query directo para conversación activa...`);
+        try {
+          const directQuery = {
+            query: `
+              SELECT TOP 1 c.conversationId
+              FROM c
+              WHERE c.userToken = @token
+                AND IS_DEFINED(c.conversationId)
+                AND c.conversationId != ''
+            `,
+            parameters: [{ name: '@token', value: token }]
+          };
+
+          const { resources } = await cosmos.container.items
+            .query(directQuery, { partitionKey: token })
+            .fetchAll();
+
+          if (resources && resources.length > 0) {
+            // Encontrar la conversación más reciente manualmente
+            const conversations = {};
+            
+            for (const doc of resources) {
+              const cId = doc.conversationId;
+              if (!conversations[cId]) {
+                conversations[cId] = { convId: cId, count: 0 };
+              }
+              conversations[cId].count++;
+            }
+
+            // Tomar la conversación con más mensajes (más activa)
+            const sortedConversations = Object.values(conversations)
+              .sort((a, b) => b.count - a.count);
+
+            if (sortedConversations.length > 0) {
+              convId = sortedConversations[0].convId;
+              console.log(`🎯 Query directo encontró: ${convId} (${sortedConversations[0].count} mensajes)`);
+            }
+          }
+        } catch (directError) {
+          console.warn('⚠️ Error en query directo:', directError.message);
+        }
+      }
+
+      // MÉTODO 3: Usar mensajes para inferir conversación más reciente
+      if (!convId) {
+        console.log(`🔍 Infiriendo conversación desde mensajes...`);
+        try {
+          const messages = await cosmos.getMessagesByToken(token, { limit: 50 });
+          console.log(`📊 getMessagesByToken para inferir conversación: ${messages?.length || 0} mensajes`);
+          
+          if (messages && messages.length > 0) {
+            // Buscar conversationId en los mensajes más recientes
+            const msgQuery = {
+              query: `
+                SELECT DISTINCT c.conversationId
+                FROM c
+                WHERE c.userToken = @token
+                  AND IS_DEFINED(c.conversationId)
+                  AND c.conversationId != ''
+                  AND (c.messageType = 'user' OR c.messageType = 'bot')
+              `,
+              parameters: [{ name: '@token', value: token }]
+            };
+
+            const { resources: convResources } = await cosmos.container.items
+              .query(msgQuery, { partitionKey: token })
+              .fetchAll();
+
+            if (convResources && convResources.length > 0) {
+              // Tomar la primera conversación encontrada
+              convId = convResources[0].conversationId;
+              console.log(`🎯 Conversación inferida desde mensajes: ${convId}`);
+            }
+          }
+        } catch (inferError) {
+          console.warn('⚠️ Error infiriendo conversación:', inferError.message);
+        }
+      }
+    }
+
+    // Si aún no hay conversationId, crear nueva
+    if (!convId) {
+      console.log(`➕ Creando nueva conversación...`);
+      try {
+        if (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation')) {
+          const created = await cosmos.createOrGetConversation({ 
+            channel: 'web', 
+            token, 
+            metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
+          });
+          convId = created?.id;
         }
       } catch (error) {
-        console.warn('⚠️ Error obteniendo última conversación:', error.message);
-        convId = null;
+        console.warn('⚠️ Error creando conversación:', error.message);
       }
-      console.log(`🎯 ConversationId encontrado: ${convId || 'null'}`);
-
+      
       if (!convId) {
-        console.log(`➕ Creando nueva conversación...`);
-        try {
-          if (cosmosAvailable() && isFn(cosmos, 'createOrGetConversation')) {
-            const created = await cosmos.createOrGetConversation({ 
-              channel: 'web', 
-              token, 
-              metadata: { language: LANGUAGE, botName: BOT_NAME, CveUsuario, NumRI } 
-            });
-            convId = created?.id;
-          }
-        } catch (error) {
-          console.warn('⚠️ Error creando conversación:', error.message);
-        }
-        
-        if (!convId) {
-          convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        }
-        console.log(`✅ Nueva conversación creada: ${convId}`);
+        convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       }
+      console.log(`✅ Nueva conversación: ${convId}`);
+    } else {
+      console.log(`✅ Usando conversación existente: ${convId}`);
     }
 
     // Guardar mensaje del usuario
@@ -421,68 +507,42 @@ export async function ask(req, res) {
     // Info de usuario para AI
     const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
 
-    // ✅ CRÍTICO: Obtener historial COMPLETO por token con múltiples métodos de fallback
+    // ✅ MEJORADO: Obtener historial con múltiples métodos y logging detallado
     let historial = [];
     console.log(`📚 === OBTENIENDO HISTORIAL COMPLETO ===`);
     
     try {
-      // MÉTODO 1: Intentar getConversationForOpenAIByToken
+      // MÉTODO 1: getConversationForOpenAIByToken mejorado
       if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
         console.log(`📚 Método 1: getConversationForOpenAIByToken...`);
         historial = await cosmos.getConversationForOpenAIByToken(token, true, 15);
-        console.log(`📚 Historial método 1: ${historial?.length || 0} mensajes`);
-      }
-      
-      // MÉTODO 2: Si no hay historial, usar getMessagesByToken (versión corregida)
-      if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
-        console.log(`📚 Método 2: getMessagesByToken...`);
-        const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
-        if (messages && messages.length > 0) {
-          historial = messages.map(m => ({ role: m.role, content: m.content }));
-          console.log(`📚 Historial método 2: ${historial.length} mensajes`);
+        console.log(`📚 Método 1 resultado: ${historial?.length || 0} mensajes`);
+        
+        if (historial && historial.length > 0) {
+          console.log(`📚 ✅ Método 1 exitoso - usando historial de ${historial.length} mensajes`);
         }
       }
       
-      // MÉTODO 3: Si aún no hay historial, usar conversación específica
-      if ((!historial || historial.length === 0) && cosmosAvailable() && convId && isFn(cosmos, 'getConversationForOpenAI')) {
-        console.log(`📚 Método 3: getConversationForOpenAI específica...`);
-        historial = await cosmos.getConversationForOpenAI(convId, token, true);
-        console.log(`📚 Historial método 3: ${historial?.length || 0} mensajes`);
+      // MÉTODO 2: Si método 1 falló, usar getMessagesByToken directamente
+      if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
+        console.log(`📚 Método 2: getMessagesByToken directamente...`);
+        const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
+        console.log(`📚 Método 2 resultado: ${messages?.length || 0} mensajes`);
+        
+        if (messages && messages.length > 0) {
+          historial = messages.map(m => ({ role: m.role, content: m.content }));
+          console.log(`📚 ✅ Método 2 exitoso - convertido a ${historial.length} mensajes`);
+        }
       }
       
-      // MÉTODO 4: Fallback con query directo
-      if ((!historial || historial.length === 0) && cosmosAvailable()) {
-        console.log(`📚 Método 4: Query directo de emergencia...`);
-        try {
-          const fallbackQuery = {
-            query: `
-              SELECT c.message, c.messageType, c.timestamp
-              FROM c
-              WHERE c.userToken = @token
-                AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
-                AND IS_DEFINED(c.message)
-                AND c.message != ''
-            `,
-            parameters: [{ name: '@token', value: token }]
-          };
-
-          const { resources } = await cosmos.container.items
-            .query(fallbackQuery, { partitionKey: token })
-            .fetchAll();
-
-          if (resources && resources.length > 0) {
-            const sortedMessages = resources
-              .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-              .slice(-15);
-            
-            historial = sortedMessages.map(m => ({
-              role: m.messageType === 'bot' ? 'assistant' : (m.messageType === 'system' ? 'system' : 'user'),
-              content: m.message
-            }));
-            console.log(`📚 Historial método 4: ${historial.length} mensajes`);
-          }
-        } catch (directQueryError) {
-          console.warn('⚠️ Query directo falló:', directQueryError.message);
+      // MÉTODO 3: Usar conversación específica si tenemos convId
+      if ((!historial || historial.length === 0) && cosmosAvailable() && convId && isFn(cosmos, 'getConversationForOpenAI')) {
+        console.log(`📚 Método 3: getConversationForOpenAI con convId específico...`);
+        historial = await cosmos.getConversationForOpenAI(convId, token, true);
+        console.log(`📚 Método 3 resultado: ${historial?.length || 0} mensajes`);
+        
+        if (historial && historial.length > 0) {
+          console.log(`📚 ✅ Método 3 exitoso - usando historial específico`);
         }
       }
       
@@ -491,17 +551,16 @@ export async function ask(req, res) {
       historial = [];
     }
 
-    // Log del historial para debug
+    // Log detallado del historial para debug
     if (historial && historial.length > 0) {
-      console.log(`📚 === HISTORIAL FINAL ===`);
+      console.log(`📚 === HISTORIAL ENCONTRADO ===`);
       console.log(`📚 Total mensajes: ${historial.length}`);
       console.log(`📚 Primer mensaje: ${historial[0]?.role}: ${historial[0]?.content?.substring(0, 50)}...`);
       console.log(`📚 Último mensaje: ${historial[historial.length - 1]?.role}: ${historial[historial.length - 1]?.content?.substring(0, 50)}...`);
       
-      // Mostrar contexto reciente
-      const recentContext = historial.slice(-5);
-      console.log(`📚 Contexto reciente (últimos 5):`);
-      recentContext.forEach((msg, idx) => {
+      // Mostrar contexto completo para debug
+      console.log(`📚 Contexto completo:`);
+      historial.forEach((msg, idx) => {
         console.log(`   ${idx + 1}. ${msg.role}: ${msg.content?.substring(0, 80)}...`);
       });
     } else {
@@ -579,7 +638,8 @@ export async function ask(req, res) {
       metadata: {
         toolsUsed: response?.metadata?.toolsUsed || null,
         usage: response?.metadata?.usage || null,
-        contextLength: historial?.length || 0 // ✅ NUEVO: info de contexto
+        contextLength: historial?.length || 0, // ✅ NUEVO: info de contexto
+        conversationContinued: !!(historial && historial.length > 0) // ✅ NUEVO: indica si hubo continuidad
       }
     });
   } catch (err) {

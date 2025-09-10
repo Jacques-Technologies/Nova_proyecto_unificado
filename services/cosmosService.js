@@ -136,34 +136,158 @@ export default class CosmosService {
   }
 
   /** 🧭 Devuelve el último conversationId activo para un token */
-  async getLatestConversationId(token) {
+ // services/cosmosService.js - CORRECCIÓN CRÍTICA del método getLatestConversationId
+
+/** 🧭 Devuelve el último conversationId activo para un token - VERSIÓN CORREGIDA */
+async getLatestConversationId(token) {
+  try {
+    console.log(`🔍 getLatestConversationId - Token: ${token?.substring(0, 8)}...`);
+    
+    if (!token) {
+      console.warn('⚠️ getLatestConversationId: token requerido');
+      return null;
+    }
+
+    if (!this.cosmosAvailable) {
+      const bucket = this._memEnsure(token);
+      const latestId = bucket.lastConvId;
+      console.log(`💾 Memoria: última conversación = ${latestId}`);
+      return latestId || null;
+    }
+
+    // ✅ MÉTODO 1: Buscar conversation_info más reciente SIN ORDER BY
+    console.log('🔍 Método 1: Buscando conversation_info...');
     try {
-      if (!token) return null;
-
-      if (!this.cosmosAvailable) {
-        const bucket = this._memEnsure(token);
-        return bucket.lastConvId || null;
-      }
-
-      const q = {
+      const infoQuery = {
         query: `
-          SELECT TOP 1 c.conversationId
+          SELECT c.conversationId, c.lastActivity, c.isActive
           FROM c
           WHERE c.userToken = @token
             AND c.documentType = 'conversation_info'
             AND c.isActive = true
-          ORDER BY c.lastActivity DESC
         `,
         parameters: [{ name: '@token', value: token }],
       };
 
-      const { resources } = await this.container.items.query(q, { partitionKey: token }).fetchAll();
-      return resources?.[0]?.conversationId || null;
-    } catch (e) {
-      console.warn('getLatestConversationId error:', e?.message);
-      return null;
+      const { resources: infoResources } = await this.container.items
+        .query(infoQuery, { partitionKey: token })
+        .fetchAll();
+
+      console.log(`📊 conversation_info encontrados: ${infoResources?.length || 0}`);
+
+      if (infoResources && infoResources.length > 0) {
+        // Ordenar manualmente por lastActivity
+        const sortedConversations = infoResources
+          .filter(conv => conv.conversationId && conv.isActive)
+          .sort((a, b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+
+        if (sortedConversations.length > 0) {
+          const latestConvId = sortedConversations[0].conversationId;
+          console.log(`✅ Método 1 exitoso: ${latestConvId}`);
+          return latestConvId;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Método 1 falló:', error.message);
     }
+
+    // ✅ MÉTODO 2: Buscar directamente en mensajes para encontrar conversación más reciente
+    console.log('🔍 Método 2: Buscando en mensajes...');
+    try {
+      const messageQuery = {
+        query: `
+          SELECT DISTINCT c.conversationId, c.timestamp
+          FROM c
+          WHERE c.userToken = @token
+            AND IS_DEFINED(c.conversationId)
+            AND c.conversationId != ''
+            AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+        `,
+        parameters: [{ name: '@token', value: token }],
+      };
+
+      const { resources: messageResources } = await this.container.items
+        .query(messageQuery, { partitionKey: token })
+        .fetchAll();
+
+      console.log(`📊 Mensajes con conversationId encontrados: ${messageResources?.length || 0}`);
+
+      if (messageResources && messageResources.length > 0) {
+        // Encontrar la conversación con el mensaje más reciente
+        const conversationTimestamps = {};
+        
+        messageResources.forEach(msg => {
+          const convId = msg.conversationId;
+          const timestamp = new Date(msg.timestamp);
+          
+          if (!conversationTimestamps[convId] || timestamp > conversationTimestamps[convId]) {
+            conversationTimestamps[convId] = timestamp;
+          }
+        });
+
+        // Encontrar la conversación más reciente
+        let latestConvId = null;
+        let latestTimestamp = null;
+        
+        for (const [convId, timestamp] of Object.entries(conversationTimestamps)) {
+          if (!latestTimestamp || timestamp > latestTimestamp) {
+            latestConvId = convId;
+            latestTimestamp = timestamp;
+          }
+        }
+
+        if (latestConvId) {
+          console.log(`✅ Método 2 exitoso: ${latestConvId} (${latestTimestamp})`);
+          return latestConvId;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Método 2 falló:', error.message);
+    }
+
+    // ✅ MÉTODO 3: Query más simple para cualquier documento con conversationId
+    console.log('🔍 Método 3: Query simple...');
+    try {
+      const simpleQuery = {
+        query: `
+          SELECT TOP 20 c.conversationId, c.timestamp
+          FROM c
+          WHERE c.userToken = @token
+            AND IS_DEFINED(c.conversationId)
+        `,
+        parameters: [{ name: '@token', value: token }],
+      };
+
+      const { resources: simpleResources } = await this.container.items
+        .query(simpleQuery, { partitionKey: token })
+        .fetchAll();
+
+      console.log(`📊 Documentos con conversationId: ${simpleResources?.length || 0}`);
+
+      if (simpleResources && simpleResources.length > 0) {
+        // Ordenar por timestamp y tomar el más reciente
+        const sorted = simpleResources
+          .filter(doc => doc.conversationId)
+          .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        if (sorted.length > 0) {
+          const latestConvId = sorted[0].conversationId;
+          console.log(`✅ Método 3 exitoso: ${latestConvId}`);
+          return latestConvId;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Método 3 falló:', error.message);
+    }
+
+    console.log('❌ No se encontró conversación activa para el token');
+    return null;
+
+  } catch (e) {
+    console.error('❌ getLatestConversationId error general:', e);
+    return null;
   }
+}
 
   /** 🔎 Buscar información de conversación por token + conversationId */
   async findConversationInfoByToken(conversationId, token) {
@@ -244,6 +368,128 @@ export default class CosmosService {
     }
   }
 
+  // services/cosmosService.js - CORRECCIÓN del método getConversationForOpenAIByToken
+
+/** 🧠 Formato OpenAI usando sólo token (toma la conversación más reciente) - VERSIÓN CORREGIDA */
+async getConversationForOpenAIByToken(token, includeSystem = true, limit = 30) {
+  try {
+    console.log(`🧠 getConversationForOpenAIByToken - Token: ${token?.substring(0, 8)}..., Limit: ${limit}`);
+    
+    if (!token) {
+      console.warn('⚠️ getConversationForOpenAIByToken: token requerido');
+      return [];
+    }
+
+    // ✅ MÉTODO DIRECTO: Obtener mensajes directamente por token sin depender de conversationId
+    console.log('🔍 Obteniendo mensajes directamente por token...');
+    
+    try {
+      const messages = await this.getMessagesByToken(token, { limit });
+      console.log(`📊 getMessagesByToken retornó: ${messages?.length || 0} mensajes`);
+      
+      if (messages && messages.length > 0) {
+        const filtered = includeSystem ? messages : messages.filter((m) => m.role !== 'system');
+        const formatted = filtered.map((m) => ({ 
+          role: m.role, 
+          content: m.content 
+        }));
+        
+        console.log(`✅ Formato OpenAI: ${formatted.length} mensajes (includeSystem: ${includeSystem})`);
+        
+        // Log de muestra para debug
+        if (formatted.length > 0) {
+          console.log(`📝 Primer mensaje: ${formatted[0].role}: ${formatted[0].content?.substring(0, 50)}...`);
+          console.log(`📝 Último mensaje: ${formatted[formatted.length - 1].role}: ${formatted[formatted.length - 1].content?.substring(0, 50)}...`);
+        }
+        
+        return formatted;
+      } else {
+        console.log('⚠️ getMessagesByToken no retornó mensajes');
+      }
+    } catch (directError) {
+      console.error('❌ Error en método directo:', directError.message);
+    }
+
+    // ✅ FALLBACK 1: Intentar con conversationId si el método directo falla
+    console.log('🔍 Fallback 1: Usando conversationId...');
+    try {
+      const convId = await this.getLatestConversationId(token);
+      console.log(`🎯 ConversationId obtenido: ${convId}`);
+      
+      if (convId) {
+        const msgs = await this.getConversationForOpenAI(convId, token, includeSystem);
+        console.log(`📊 getConversationForOpenAI retornó: ${msgs?.length || 0} mensajes`);
+        
+        if (msgs && msgs.length > 0) {
+          const limitedMsgs = msgs.slice(-Math.min(limit, 100));
+          console.log(`✅ Fallback 1 exitoso: ${limitedMsgs.length} mensajes`);
+          return limitedMsgs;
+        }
+      }
+    } catch (fallbackError) {
+      console.warn('⚠️ Fallback 1 falló:', fallbackError.message);
+    }
+
+    // ✅ FALLBACK 2: Query directo en Cosmos con formato OpenAI
+    if (this.cosmosAvailable) {
+      console.log('🔍 Fallback 2: Query directo para formato OpenAI...');
+      
+      try {
+        const directQuery = {
+          query: `
+            SELECT c.message, c.messageType, c.timestamp
+            FROM c
+            WHERE c.userToken = @token
+              AND (c.messageType = 'user' OR c.messageType = 'bot' OR c.messageType = 'system')
+              AND IS_DEFINED(c.message)
+              AND c.message != ''
+              AND c.message != 'undefined'
+              AND c.message != 'null'
+          `,
+          parameters: [{ name: '@token', value: token }]
+        };
+
+        const { resources } = await this.container.items
+          .query(directQuery, { partitionKey: token })
+          .fetchAll();
+
+        console.log(`📊 Query directo: ${resources?.length || 0} mensajes encontrados`);
+
+        if (resources && resources.length > 0) {
+          // Procesar y ordenar mensajes
+          const processedMessages = resources
+            .filter(msg => msg.message && msg.message.trim() !== '')
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+            .slice(-limit)
+            .map(msg => ({
+              role: msg.messageType === 'bot' ? 'assistant' : (msg.messageType === 'system' ? 'system' : 'user'),
+              content: msg.message
+            }));
+
+          const filtered = includeSystem ? processedMessages : processedMessages.filter(m => m.role !== 'system');
+          
+          console.log(`✅ Fallback 2 exitoso: ${filtered.length} mensajes`);
+          
+          if (filtered.length > 0) {
+            console.log(`📝 Query directo - Primer: ${filtered[0].role}: ${filtered[0].content?.substring(0, 50)}...`);
+            console.log(`📝 Query directo - Último: ${filtered[filtered.length - 1].role}: ${filtered[filtered.length - 1].content?.substring(0, 50)}...`);
+          }
+          
+          return filtered;
+        }
+      } catch (queryError) {
+        console.error('❌ Error en query directo:', queryError.message);
+      }
+    }
+
+    console.log('❌ Todos los métodos fallaron - retornando array vacío');
+    return [];
+
+  } catch (e) {
+    console.error('❌ getConversationForOpenAIByToken error general:', e);
+    return [];
+  }
+}
   /** 📖 Obtener conversación (arreglo por roles) */
   async getConversationMessages(conversationId, token) {
     try {
