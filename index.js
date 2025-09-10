@@ -19,6 +19,86 @@ const cosmosService = new CosmosService();
 const conversationService = new ConversationService();
 const openaiService = new AzureOpenAIService();
 
+// ✅ CONFIGURACIÓN MULTI-BOT
+const BOT_CONFIGS = [
+  {
+    id: 'bot1',
+    name: 'Nova Bot Principal',
+    endpoint: '/api/messages', // Bot principal mantiene ruta original
+    appId: process.env.MicrosoftAppId,
+    appPassword: process.env.MicrosoftAppPassword,
+    appType: process.env.MicrosoftAppType || 'SingleTenant',
+    tenantId: process.env.MicrosoftAppTenantId
+  },
+  {
+    id: 'bot2',
+    name: 'Nova Bot 2',
+    endpoint: '/api/messages/bot',
+    appId: process.env.MicrosoftAppId_Bot2,
+    appPassword: process.env.MicrosoftAppPassword_Bot2,
+    appType: process.env.MicrosoftAppType_Bot2 || 'SingleTenant',
+    tenantId: process.env.MicrosoftAppTenantId // Mismo tenant
+  },
+  {
+    id: 'bot3',
+    name: 'Nova Bot 3',
+    endpoint: '/api/messages/bot2',
+    appId: process.env.MicrosoftAppId_Bot3,
+    appPassword: process.env.MicrosoftAppPassword_Bot3,
+    appType: process.env.MicrosoftAppType_Bot3 || 'SingleTenant',
+    tenantId: process.env.MicrosoftAppTenantId // Mismo tenant
+  }
+  // Puedes agregar más bots aquí siguiendo el patrón
+];
+
+// ✅ FUNCIÓN PARA CREAR ADAPTADOR Y BOT
+function createBotInstance(config) {
+  console.log(`🤖 Creando bot: ${config.name} (${config.id})`);
+  
+  // Validar configuración
+  if (!config.appId || !config.appPassword) {
+    console.warn(`⚠️ Bot ${config.id} no configurado - falta AppId o AppPassword`);
+    return null;
+  }
+
+  try {
+    // Crear autenticación específica para este bot
+    const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication({
+      MicrosoftAppId: config.appId,
+      MicrosoftAppPassword: config.appPassword,
+      MicrosoftAppType: config.appType,
+      MicrosoftAppTenantId: config.tenantId
+    });
+
+    // Crear adaptador específico
+    const adapter = new CloudAdapter(botFrameworkAuthentication);
+    adapter.onTurnError = async (context, error) => {
+      console.error(`❌ Error en ${config.name}:`, error);
+      await context.sendActivity('Lo siento, ocurrió un error procesando tu solicitud.');
+    };
+
+    // Crear estados específicos (pueden ser compartidos o separados según necesites)
+    const storage = new MemoryStorage();
+    const conversationState = new ConversationState(storage);
+    const userState = new UserState(storage);
+    
+    // Crear instancia del bot
+    const bot = new TeamsBot(conversationState, userState);
+
+    return {
+      config,
+      adapter,
+      bot,
+      conversationState,
+      userState
+    };
+
+  } catch (error) {
+    console.error(`❌ Error creando bot ${config.id}:`, error);
+    return null;
+  }
+}
+
 async function startServer() {
   // Rutas dinámicas de PDF y Word
   const { pdfRoutes } = await import('./backend/routes/pdf.routes.js');
@@ -31,7 +111,7 @@ async function startServer() {
   
   // ✅ CORS configurado para permitir cualquier origen
   app.use(cors({
-    origin: '*',  // Permite cualquier origen
+    origin: '*',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -61,34 +141,83 @@ async function startServer() {
   app.use('/api', pdfRoutes);
   app.use('/api', wordRoutes);
   
-  // ✅ Configuración Bot Framework para Teams
-  const PORT = process.env.PORT || 3978;
-  const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication({
-    MicrosoftAppId: process.env.MicrosoftAppId,
-    MicrosoftAppPassword: process.env.MicrosoftAppPassword,
-    MicrosoftAppType: process.env.MicrosoftAppType || 'SingleTenant',
-    MicrosoftAppTenantId: process.env.MicrosoftAppTenantId
-  });
+  // ✅ CREAR INSTANCIAS DE BOTS
+  const activeBots = [];
+  const botInstances = new Map();
+
+  console.log('🚀 Inicializando bots...');
   
-  const adapter = new CloudAdapter(botFrameworkAuthentication);
-  adapter.onTurnError = async (context, error) => {
-    console.error('❌ Turn error:', error);
-    await context.sendActivity('Lo siento, ocurrió un error procesando tu solicitud.');
-  };
-  
-  const storage = new MemoryStorage();
-  const conversationState = new ConversationState(storage);
-  const userState = new UserState(storage);
-  const bot = new TeamsBot(conversationState, userState);
-  
-  // Endpoint de mensajes para Microsoft Teams
-  app.post('/api/messages', async (req, res) => {
-    try {
-      await adapter.process(req, res, (context) => bot.run(context));
-    } catch (err) {
-      console.error('❌ Error procesando mensaje del adaptador:', err);
-      res.status(500).send({ error: 'Error interno del bot' });
+  for (const config of BOT_CONFIGS) {
+    const botInstance = createBotInstance(config);
+    
+    if (botInstance) {
+      activeBots.push(botInstance);
+      botInstances.set(config.id, botInstance);
+      
+      // ✅ REGISTRAR ENDPOINT PARA CADA BOT
+      app.post(config.endpoint, async (req, res) => {
+        try {
+          console.log(`📨 Mensaje recibido en ${config.endpoint} (${config.name})`);
+          await botInstance.adapter.process(req, res, (context) => botInstance.bot.run(context));
+        } catch (err) {
+          console.error(`❌ Error procesando mensaje en ${config.name}:`, err);
+          res.status(500).send({ error: 'Error interno del bot' });
+        }
+      });
+
+      console.log(`✅ Bot activado: ${config.name}`);
+      console.log(`   📡 Endpoint: ${config.endpoint}`);
+      console.log(`   🆔 App ID: ${config.appId.substring(0, 8)}...`);
+      console.log(`   🏢 Tenant: ${config.tenantId?.substring(0, 8) || 'N/A'}...`);
+      
+    } else {
+      console.log(`⚠️ Bot omitido: ${config.name} (no configurado)`);
     }
+  }
+
+  console.log(`\n🤖 Total bots activos: ${activeBots.length}/${BOT_CONFIGS.length}`);
+  
+  // ✅ ENDPOINT DE INFORMACIÓN DE BOTS
+  app.get('/api/bots', (req, res) => {
+    const botsInfo = activeBots.map(botInstance => ({
+      id: botInstance.config.id,
+      name: botInstance.config.name,
+      endpoint: botInstance.config.endpoint,
+      appId: botInstance.config.appId.substring(0, 8) + '...',
+      status: 'active',
+      stats: botInstance.bot.getStats?.() || {}
+    }));
+
+    res.json({
+      totalBots: activeBots.length,
+      configuredBots: BOT_CONFIGS.length,
+      bots: botsInfo,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // ✅ ENDPOINT DE INFORMACIÓN ESPECÍFICA DE BOT
+  app.get('/api/bots/:botId', (req, res) => {
+    const botId = req.params.botId;
+    const botInstance = botInstances.get(botId);
+
+    if (!botInstance) {
+      return res.status(404).json({ 
+        error: 'Bot no encontrado',
+        availableBots: Array.from(botInstances.keys())
+      });
+    }
+
+    res.json({
+      id: botInstance.config.id,
+      name: botInstance.config.name,
+      endpoint: botInstance.config.endpoint,
+      appId: botInstance.config.appId.substring(0, 8) + '...',
+      tenantId: botInstance.config.tenantId?.substring(0, 8) + '...' || 'N/A',
+      status: 'active',
+      stats: botInstance.bot.getStats?.() || {},
+      timestamp: new Date().toISOString()
+    });
   });
   
   // ✅ Endpoint de salud mejorado
@@ -96,7 +225,9 @@ async function startServer() {
     res.json({ 
       status: 'OK', 
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
+      environment: process.env.NODE_ENV || 'development',
+      activeBots: activeBots.length,
+      totalConfigurations: BOT_CONFIGS.length
     });
   });
 
@@ -128,19 +259,53 @@ async function startServer() {
     });
   });
   
-  // Arranque del servidor
+  // ✅ ARRANQUE DEL SERVIDOR
+  const PORT = process.env.PORT || 3978;
+  
   app.listen(PORT, () => {
-    console.log(`🚀 Servidor iniciado en puerto ${PORT}`);
+    console.log(`\n🚀 ===============================================`);
+    console.log(`🚀 SERVIDOR MULTI-BOT INICIADO EN PUERTO ${PORT}`);
+    console.log(`🚀 ===============================================`);
     console.log(`🌐 CORS permite cualquier origen (*)`);
-    console.log(`📨 Endpoint Teams: http://localhost:${PORT}/api/messages`);
-    console.log(`📄 Endpoints PDF/Word: POST http://localhost:${PORT}/api/sendPdf | /api/sendWord`);
-    console.log(`💬 Endpoints Webchat:`);
-    console.log(`    - POST http://localhost:${PORT}/api/webchat/init`);
-    console.log(`    - POST http://localhost:${PORT}/api/webchat/ask`);
-    console.log(`    - GET  http://localhost:${PORT}/api/webchat/history`);
-    console.log(`    - GET  http://localhost:${PORT}/api/webchat/stream`);
-    console.log(`🔍 Test CORS: GET http://localhost:${PORT}/api/cors-test`);
-    console.log(`❤️  Health: GET http://localhost:${PORT}/health`);
+    console.log(`\n📨 ENDPOINTS DE BOTS ACTIVOS:`);
+    
+    activeBots.forEach(botInstance => {
+      console.log(`   • ${botInstance.config.name}:`);
+      console.log(`     POST http://localhost:${PORT}${botInstance.config.endpoint}`);
+    });
+    
+    console.log(`\n📄 ENDPOINTS DE DOCUMENTOS:`);
+    console.log(`   • POST http://localhost:${PORT}/api/sendPdf`);
+    console.log(`   • POST http://localhost:${PORT}/api/sendWord`);
+    
+    console.log(`\n💬 ENDPOINTS DE WEBCHAT:`);
+    console.log(`   • POST http://localhost:${PORT}/api/webchat/init`);
+    console.log(`   • POST http://localhost:${PORT}/api/webchat/ask`);
+    console.log(`   • GET  http://localhost:${PORT}/api/webchat/history`);
+    console.log(`   • GET  http://localhost:${PORT}/api/webchat/stream`);
+    
+    console.log(`\n🔍 ENDPOINTS DE INFORMACIÓN:`);
+    console.log(`   • GET  http://localhost:${PORT}/api/bots (info de todos los bots)`);
+    console.log(`   • GET  http://localhost:${PORT}/api/bots/:botId (info específica)`);
+    console.log(`   • GET  http://localhost:${PORT}/api/cors-test`);
+    console.log(`   • GET  http://localhost:${PORT}/health`);
+    
+    console.log(`\n🤖 CONFIGURACIÓN:`);
+    console.log(`   • Tenant ID compartido: ${process.env.MicrosoftAppTenantId?.substring(0, 8) || 'N/A'}...`);
+    console.log(`   • Bots activos: ${activeBots.length}/${BOT_CONFIGS.length}`);
+    console.log(`\n===============================================`);
+  });
+
+  // ✅ CLEANUP AL CERRAR
+  process.on('SIGINT', () => {
+    console.log('\n🧹 Limpiando bots antes de cerrar...');
+    activeBots.forEach(botInstance => {
+      if (botInstance.bot.cleanup) {
+        botInstance.bot.cleanup();
+      }
+    });
+    console.log('✅ Limpieza completada');
+    process.exit(0);
   });
 }
 
