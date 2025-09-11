@@ -66,7 +66,7 @@ export default class DocumentService {
             this.openaiClient = new OpenAI({
                 apiKey: apiKey,
                 baseURL: baseURL,
-                defaultQuery: { 'api-version': '2024-02-15-preview' },
+                defaultQuery: { 'api-version': '2025-01-01-preview' },
                 defaultHeaders: {
                     'api-key': apiKey,
                     'Content-Type': 'application/json'

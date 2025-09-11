@@ -7,7 +7,7 @@ import { config } from "../../controllers/config/config.js";
 export const openAIClient = new OpenAI({
   apiKey: config.AZURE_OPENAI_API_KEY,
   baseURL: `${config.AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
-  defaultQuery: { 'api-version': '2024-12-01-preview' },
+  defaultQuery: { 'api-version': '2025-01-01-preview' },
   defaultHeaders: {
     'api-key': config.AZURE_OPENAI_API_KEY,
   },

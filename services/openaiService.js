@@ -26,8 +26,8 @@ export default class AzureOpenAIService {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
       const endpoint = process.env.OPENAI_ENDPOINT;
-      const deploymentName = 'gpt-5-mini';
-      const apiVersion = '2024-12-01-preview';
+      const deploymentName = 'gpt-4.1-mini';
+      const apiVersion = '2025-01-01-preview';
 
       // Configuración para embedding deployment
       const embeddingDeployment = process.env.EMBEDDING_DEPLOYMENT || 'text-embedding-3-large';
