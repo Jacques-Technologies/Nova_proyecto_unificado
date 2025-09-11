@@ -658,33 +658,7 @@ INSTRUCCIONES:
       return null;
     }
   }
-    /**
-   * Método de compatibilidad para WebChat
-   * Recibe mensajes en formato [{role, content}] y devuelve solo el texto
-   */
-  async getChatCompletion(messages) {
-    try {
-      if (!this.openaiAvailable) {
-        console.warn("⚠️ Azure OpenAI no está disponible. Verifica OPENAI_API_KEY y OPENAI_ENDPOINT.");
-        return "Azure OpenAI no está disponible.";
-      }
-
-      // Llamada a Azure OpenAI
-      const response = await this.openai.chat.completions.create({
-        model: this.deploymentName,
-        messages,
-        temperature: 1.0,
-        max_completion_tokens: 1500
-      });
-
-      const completion = response?.choices?.[0]?.message?.content || "";
-      return completion.trim();
-    } catch (error) {
-      console.error("❌ Error en getChatCompletion():", error.response?.data || error.message);
-      return `Error generando respuesta: ${error.message}`;
-    }
-  }
-
+  
   async completionWithContext({ messages = [], documents = [], temperature = 1.0, contextVars = {} }) {
     try {
       if (!this.openaiAvailable) return { text: '' };
