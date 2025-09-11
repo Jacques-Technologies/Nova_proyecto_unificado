@@ -479,8 +479,6 @@ export async function ask(req, res) {
     console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
     
     if (!convId && cosmosAvailable()) {
-      console.log(`🔍 Buscando conversación existente por token...`);
-      
       try {
         convId = await cosmos.getLatestConversationId(token);
         console.log(`🎯 getLatestConversationId result: ${convId || 'null'}`);
@@ -488,7 +486,6 @@ export async function ask(req, res) {
         console.warn('⚠️ Error en getLatestConversationId:', error.message);
       }
 
-      // Si no hay conversationId, crear nueva
       if (!convId) {
         console.log(`➕ Creando nueva conversación...`);
         try {
@@ -513,14 +510,12 @@ export async function ask(req, res) {
       }
     }
 
-    // Fallback si no hay convId
     if (!convId) {
       convId = `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       console.log(`🔄 Fallback conversationId: ${convId}`);
     }
 
-    // ✅ GUARDAR MENSAJE DEL USUARIO ANTES DE OBTENER CONTEXTO
-    console.log(`💾 === GUARDANDO MENSAJE DEL USUARIO ===`);
+    // ✅ GUARDAR MENSAJE DEL USUARIO
     try {
       if (isFn(cosmos, 'appendMessage')) {
         const userMessageData = {
@@ -531,165 +526,65 @@ export async function ask(req, res) {
           channel: 'web',
           token: token
         };
-        
-        const savedUserMsg = await cosmos.appendMessage(convId, userMessageData);
-        console.log(`✅ Mensaje del usuario guardado:`, !!savedUserMsg);
+        await cosmos.appendMessage(convId, userMessageData);
+        console.log(`💾 Mensaje de usuario guardado correctamente`);
       }
     } catch (error) {
       console.error('❌ Error guardando mensaje usuario:', error.message);
     }
 
-    // ✅ NUEVO: OBTENER CONTEXTO USANDO EL ENDPOINT /history INTERNO
+    // ✅ OBTENER ÚLTIMOS 3 MENSAJES DE CONTEXTO
     let historial = [];
-    console.log(`📚 === OBTENIENDO CONTEXTO CON /history INTERNO ===`);
-    
     try {
-      // Llamar al método history internamente para obtener el contexto
-      const historyResult = await getHistoryInternal(token, 20); // Últimos 20 mensajes
-      
-      if (historyResult.success && historyResult.items && historyResult.items.length > 0) {
-        console.log(`📚 History interno encontró: ${historyResult.items.length} mensajes`);
-        
-        // Convertir el formato del history al formato esperado por OpenAI
+      const historyResult = await getHistoryInternal(token, 10); // pedimos 10 y luego cortamos
+      if (historyResult.success && historyResult.items?.length > 0) {
         historial = historyResult.items
-          .filter(item => item.message && item.message.trim() !== '')
+          .filter(item => item.message?.trim())
           .map(item => ({
-            role: item.messageType === 'bot' ? 'assistant' : 
-                  (item.messageType === 'system' ? 'system' : 'user'),
+            role: item.messageType === 'bot' ? 'assistant' :
+                  item.messageType === 'system' ? 'system' : 'user',
             content: item.message
-          }));
-
-        // Filtrar mensajes duplicados consecutivos
-        historial = filterDuplicateMessages(historial);
-        
-        // Limitar el historial para no sobrecargar el contexto
-        if (historial.length > 15) {
-          historial = historial.slice(-15); // Mantener solo los últimos 15
-        }
-
-        console.log(`📚 ✅ Contexto preparado: ${historial.length} mensajes válidos`);
-        
-        // Log detallado del contexto
-        if (historial.length > 0) {
-          console.log(`📚 Primer mensaje del contexto: ${historial[0].role}: ${historial[0].content.substring(0, 50)}...`);
-          console.log(`📚 Último mensaje del contexto: ${historial[historial.length - 1].role}: ${historial[historial.length - 1].content.substring(0, 50)}...`);
-        }
-      } else {
-        console.warn(`⚠️ History interno no retornó mensajes válidos`);
-        console.warn(`⚠️ Result:`, historyResult);
+          }))
+          .slice(-3); // 🔑 SOLO LOS ÚLTIMOS 3 MENSAJES
       }
-      
     } catch (historyError) {
-      console.error('❌ Error obteniendo contexto con history interno:', historyError.message);
-      historial = [];
+      console.error('❌ Error obteniendo contexto:', historyError.message);
     }
 
-    // ✅ FALLBACK: Si no hay contexto, intentar métodos directos
-    if (!historial || historial.length === 0) {
-      console.log(`🔄 === FALLBACK: MÉTODOS DIRECTOS PARA CONTEXTO ===`);
-      
-      try {
-        // Método fallback 1: getConversationForOpenAIByToken
-        if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
-          console.log(`🔄 Fallback 1: getConversationForOpenAIByToken...`);
-          historial = await cosmos.getConversationForOpenAIByToken(token, true, 15);
-          
-          if (historial && historial.length > 0) {
-            console.log(`🔄 ✅ Fallback 1 exitoso: ${historial.length} mensajes`);
-          }
-        }
-        
-        // Método fallback 2: getMessagesByToken directo
-        if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
-          console.log(`🔄 Fallback 2: getMessagesByToken directo...`);
-          const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
-          
-          if (messages && messages.length > 0) {
-            historial = messages.map(m => ({ role: m.role, content: m.content }));
-            console.log(`🔄 ✅ Fallback 2 exitoso: ${historial.length} mensajes`);
-          }
-        }
-        
-      } catch (fallbackError) {
-        console.error('❌ Error en métodos fallback:', fallbackError.message);
-        historial = [];
-      }
+    // ✅ Inyectar último mensaje del usuario si no quedó incluido
+    if (!historial.length || historial[historial.length - 1].content !== content) {
+      historial.push({ role: 'user', content });
     }
 
-    // ✅ VALIDACIÓN Y LIMPIEZA FINAL DEL HISTORIAL
-    if (historial && historial.length > 0) {
-      // Filtrar mensajes inválidos
-      const validHistorial = historial.filter(msg => 
-        msg && 
-        msg.role && 
-        msg.content && 
-        msg.content.trim() !== '' &&
-        msg.content !== 'undefined' &&
-        msg.content !== 'null' &&
-        !msg.content.includes('[Conversación reiniciada')
-      );
-      
-      if (validHistorial.length !== historial.length) {
-        console.log(`🔧 Filtrados ${historial.length - validHistorial.length} mensajes inválidos`);
-        historial = validHistorial;
-      }
-
-      // Log final del contexto
-      console.log(`📚 === CONTEXTO FINAL PARA OPENAI ===`);
-      console.log(`📚 Total mensajes: ${historial.length}`);
-      if (historial.length > 0) {
-        console.log(`📚 Contexto completo:`);
-        historial.forEach((msg, idx) => {
-          console.log(`   ${idx + 1}. ${msg.role}: ${msg.content.substring(0, 80)}...`);
-        });
-      }
-    } else {
-      console.warn(`⚠️ === SIN CONTEXTO DISPONIBLE ===`);
-    }
-
-    // ✅ PROCESAR CON OPENAI CON EL CONTEXTO OBTENIDO
-    console.log(`🤖 === PROCESANDO CON OPENAI ===`);
-    
-    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
-    
-    console.log(`🤖 Enviando a OpenAI:`, {
-      contentLength: content?.length,
-      historialLength: historial?.length,
-      userToken: token?.substring(0, 8) + '...',
-      conversationId: convId,
-      hasContext: historial && historial.length > 0
+    // ✅ Inyectar mensaje de sistema al inicio
+    historial.unshift({
+      role: 'system',
+      content:
+        "Eres Nova-AI, el asistente oficial de Nova Corporation. Responde de forma clara, profesional y usa SOLO el contexto de los últimos 3 mensajes para mantener coherencia."
     });
-    
-    const response = await ai.procesarMensaje(
-      content,
-      historial || [], // Contexto obtenido del /history
-      token,
-      userInfo,
-      convId
+
+    console.log(`📚 Contexto final (${historial.length} mensajes):`);
+    historial.forEach((msg, i) =>
+      console.log(`   ${i + 1}. ${msg.role}: ${msg.content.substring(0, 80)}...`)
     );
 
-    // ✅ PROCESAR RESPUESTA DE OPENAI
+    // ✅ PROCESAR CON OPENAI
+    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
+    const response = await ai.procesarMensaje(content, historial, token, userInfo, convId);
+
     let replyText = '';
     let citations = null;
-
-    if (typeof response === 'string') {
-      replyText = response;
-    } else if (response?.type === 'text') {
+    if (typeof response === 'string') replyText = response;
+    else if (response?.type === 'text') {
       replyText = response.content || 'Respuesta vacía';
       citations = response.metadata?.toolsUsed || null;
-    } else if (response?.content) {
-      replyText = response.content;
-    } else if (response?.text) {
-      replyText = response.text;
-    } else {
-      replyText = 'No se pudo procesar la respuesta';
-    }
+    } else if (response?.content) replyText = response.content;
+    else replyText = 'No se pudo procesar la respuesta';
 
     // ✅ GUARDAR RESPUESTA DEL ASISTENTE
-    console.log(`💾 === GUARDANDO RESPUESTA DEL ASISTENTE ===`);
     try {
       if (isFn(cosmos, 'appendMessage')) {
-        const assistantMessageData = {
+        await cosmos.appendMessage(convId, {
           role: 'assistant',
           content: replyText,
           citations: citations || [],
@@ -697,19 +592,12 @@ export async function ask(req, res) {
           channel: 'web',
           token: token,
           metadata: { token, CveUsuario, NumRI, toolsUsed: response?.metadata?.toolsUsed || null }
-        };
-        
-        const savedAssistantMsg = await cosmos.appendMessage(convId, assistantMessageData);
-        console.log(`✅ Mensaje del asistente guardado:`, !!savedAssistantMsg);
+        });
+        console.log(`💾 Respuesta del asistente guardada correctamente`);
       }
     } catch (error) {
       console.error('❌ Error guardando respuesta del asistente:', error.message);
     }
-
-    console.log(`✅ === ASK COMPLETADO EXITOSAMENTE ===`);
-    console.log(`    - ConversationId final: ${convId}`);
-    console.log(`    - Respuesta length: ${replyText?.length}`);
-    console.log(`    - Contexto usado: ${historial?.length || 0} mensajes (vía /history)`);
 
     return res.json({
       success: true,
@@ -717,42 +605,21 @@ export async function ask(req, res) {
       citations,
       conversationId: convId,
       metadata: {
-        toolsUsed: response?.metadata?.toolsUsed || null,
-        usage: response?.metadata?.usage || null,
-        contextLength: historial?.length || 0,
-        conversationContinued: !!(historial && historial.length > 0),
-        contextSource: 'history_endpoint', // Indicar que se usó /history
-        debug: {
-          tokenUsed: token?.substring(0, 8) + '...',
-          conversationIdFound: !!conversationId,
-          conversationIdUsed: convId,
-          historyMethodUsed: 'internal_history_endpoint',
-          messagesValidated: historial?.length || 0
-        }
+        contextLength: historial.length,
+        contextSource: 'last_3_messages',
+        conversationContinued: historial.length > 1
       }
     });
   } catch (err) {
-    console.error('❌ === ASK ERROR GENERAL ===');
-    console.error('❌ Error:', err.message);
-    console.error('❌ Stack:', err.stack);
-
-    if (err.message && (err.message.includes('Token expirado') || err.message.includes('401'))) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token de autenticación expirado. Por favor, inicia sesión nuevamente.'
-      });
-    }
-
-    return res.status(500).json({ 
-      success: false, 
+    console.error('❌ === ASK ERROR GENERAL ===', err);
+    return res.status(500).json({
+      success: false,
       message: 'Error procesando el mensaje. Intenta de nuevo.',
-      debug: {
-        error: err.message,
-        timestamp: new Date().toISOString()
-      }
+      debug: { error: err.message, timestamp: new Date().toISOString() }
     });
   }
 }
+
 
 // ✅ FUNCIÓN AUXILIAR: Llamar al endpoint /history internamente
 async function getHistoryInternal(token, limit = 20) {
