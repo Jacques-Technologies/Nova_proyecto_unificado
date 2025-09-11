@@ -469,13 +469,19 @@ export const ask = async (req, res) => {
     // 1. Obtener historial desde Cosmos si no viene en body
     let historyResult = { items: [] };
     if (!historial) {
-      historyResult = await cosmos.getConversationForOpenAIByToken(token);
+      try {
+        const cosmosData = await cosmos.getConversationForOpenAIByToken(token);
+        historyResult.items = cosmosData?.items ?? [];
+      } catch (e) {
+        console.warn(`⚠️ No se encontró conversación activa para el token (${token}). Continuando sin historial.`);
+        historyResult.items = [];
+      }
     } else {
       historyResult.items = historial;
     }
 
-    // 2. Convertir el historial al formato esperado por OpenAI
-    let mappedMessages = historyResult.items
+    // 2. Convertir el historial al formato esperado por OpenAI (con fallback vacío)
+    let mappedMessages = (historyResult.items || [])
       .filter((item) => item.message && item.message.trim() !== "")
       .map((item) => ({
         role:
@@ -489,14 +495,18 @@ export const ask = async (req, res) => {
       }));
 
     // ✅ Recortar historial a partir del último mensaje del bot
-    const lastBotIndex = mappedMessages.map((m) => m.role).lastIndexOf("assistant");
-    if (lastBotIndex !== -1 && lastBotIndex < mappedMessages.length - 1) {
-      mappedMessages = mappedMessages.slice(lastBotIndex);
-      console.log(
-        `✂️ Historial recortado: usando desde último bot (${lastBotIndex}) → ${mappedMessages.length} mensajes`
-      );
+    if (mappedMessages.length > 0) {
+      const lastBotIndex = mappedMessages.map((m) => m.role).lastIndexOf("assistant");
+      if (lastBotIndex !== -1 && lastBotIndex < mappedMessages.length - 1) {
+        mappedMessages = mappedMessages.slice(lastBotIndex);
+        console.log(
+          `✂️ Historial recortado: usando desde último bot (${lastBotIndex}) → ${mappedMessages.length} mensajes`
+        );
+      } else {
+        console.log("ℹ️ No se encontró mensaje previo del bot, usando historial completo");
+      }
     } else {
-      console.log("ℹ️ No se encontró mensaje previo del bot, usando historial completo");
+      console.log("ℹ️ Historial vacío: se enviará solo el mensaje actual del usuario");
     }
 
     // 3. Agregar el nuevo mensaje del usuario al final
@@ -507,25 +517,33 @@ export const ask = async (req, res) => {
     });
 
     // 4. Guardar el mensaje en Cosmos (persistencia)
-    await cosmos.appendMessage(token, {
-      message: content,
-      type: "user",
-      messageType: "user",
-      timestamp: new Date().toISOString(),
-      userToken: token,
-    });
+    try {
+      await cosmos.appendMessage(token, {
+        message: content,
+        type: "user",
+        messageType: "user",
+        timestamp: new Date().toISOString(),
+        userToken: token,
+      });
+    } catch (e) {
+      console.warn("⚠️ No se pudo guardar el mensaje en Cosmos (fallback en memoria).", e.message);
+    }
 
     // 5. Llamar a OpenAI para generar la respuesta
     const completion = await ai.getChatCompletion(mappedMessages);
 
     // 6. Guardar la respuesta del bot en Cosmos
-    await cosmos.appendMessage(token, {
-      message: completion,
-      type: "bot",
-      messageType: "bot",
-      timestamp: new Date().toISOString(),
-      userToken: token,
-    });
+    try {
+      await cosmos.appendMessage(token, {
+        message: completion,
+        type: "bot",
+        messageType: "bot",
+        timestamp: new Date().toISOString(),
+        userToken: token,
+      });
+    } catch (e) {
+      console.warn("⚠️ No se pudo guardar la respuesta en Cosmos (fallback en memoria).", e.message);
+    }
 
     // 7. Responder al frontend
     return res.status(200).json({
