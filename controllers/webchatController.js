@@ -454,6 +454,8 @@ function generateDebugSummary(debug) {
 
 // controllers/webchatController.js - MÉTODO ASK CORREGIDO PARA CONTINUIDAD
 
+// controllers/webchatController.js - MÉTODO ASK REFACTORIZADO CON /history COMO CONTEXTO
+
 export async function ask(req, res) {
   try {
     const { content, conversationId, metadata } = req.body || {};
@@ -472,7 +474,7 @@ export async function ask(req, res) {
       return res.status(503).json({ success: false, message: 'Servicio de IA no disponible' });
     }
 
-    // ✅ CRÍTICO: Resolución mejorada de conversationId
+    // ✅ RESOLUCIÓN DE CONVERSATION ID
     let convId = conversationId;
     console.log(`🎯 ConversationId recibido: ${convId || 'null'}`);
     
@@ -517,7 +519,7 @@ export async function ask(req, res) {
       console.log(`🔄 Fallback conversationId: ${convId}`);
     }
 
-    // Guardar mensaje del usuario
+    // ✅ GUARDAR MENSAJE DEL USUARIO ANTES DE OBTENER CONTEXTO
     console.log(`💾 === GUARDANDO MENSAJE DEL USUARIO ===`);
     try {
       if (isFn(cosmos, 'appendMessage')) {
@@ -537,54 +539,84 @@ export async function ask(req, res) {
       console.error('❌ Error guardando mensaje usuario:', error.message);
     }
 
-    // Info de usuario para AI
-    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
-
-    // ✅ MEJORADO: Obtener historial con múltiples métodos y logging detallado
+    // ✅ NUEVO: OBTENER CONTEXTO USANDO EL ENDPOINT /history INTERNO
     let historial = [];
-    console.log(`📚 === OBTENIENDO HISTORIAL COMPLETO ===`);
+    console.log(`📚 === OBTENIENDO CONTEXTO CON /history INTERNO ===`);
     
     try {
-      // MÉTODO 1: getConversationForOpenAIByToken mejorado
-      if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
-        console.log(`📚 Método 1: getConversationForOpenAIByToken...`);
-        historial = await cosmos.getConversationForOpenAIByToken(token, true, 15);
-        console.log(`📚 Método 1 resultado: ${historial?.length || 0} mensajes`);
+      // Llamar al método history internamente para obtener el contexto
+      const historyResult = await getHistoryInternal(token, 20); // Últimos 20 mensajes
+      
+      if (historyResult.success && historyResult.items && historyResult.items.length > 0) {
+        console.log(`📚 History interno encontró: ${historyResult.items.length} mensajes`);
         
-        if (historial && historial.length > 0) {
-          console.log(`📚 ✅ Método 1 exitoso - usando historial de ${historial.length} mensajes`);
+        // Convertir el formato del history al formato esperado por OpenAI
+        historial = historyResult.items
+          .filter(item => item.message && item.message.trim() !== '')
+          .map(item => ({
+            role: item.messageType === 'bot' ? 'assistant' : 
+                  (item.messageType === 'system' ? 'system' : 'user'),
+            content: item.message
+          }));
+
+        // Filtrar mensajes duplicados consecutivos
+        historial = filterDuplicateMessages(historial);
+        
+        // Limitar el historial para no sobrecargar el contexto
+        if (historial.length > 15) {
+          historial = historial.slice(-15); // Mantener solo los últimos 15
         }
+
+        console.log(`📚 ✅ Contexto preparado: ${historial.length} mensajes válidos`);
+        
+        // Log detallado del contexto
+        if (historial.length > 0) {
+          console.log(`📚 Primer mensaje del contexto: ${historial[0].role}: ${historial[0].content.substring(0, 50)}...`);
+          console.log(`📚 Último mensaje del contexto: ${historial[historial.length - 1].role}: ${historial[historial.length - 1].content.substring(0, 50)}...`);
+        }
+      } else {
+        console.warn(`⚠️ History interno no retornó mensajes válidos`);
+        console.warn(`⚠️ Result:`, historyResult);
       }
       
-      // MÉTODO 2: Si método 1 falló, usar getMessagesByToken directamente
-      if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
-        console.log(`📚 Método 2: getMessagesByToken directamente...`);
-        const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
-        console.log(`📚 Método 2 resultado: ${messages?.length || 0} mensajes`);
-        
-        if (messages && messages.length > 0) {
-          historial = messages.map(m => ({ role: m.role, content: m.content }));
-          console.log(`📚 ✅ Método 2 exitoso - convertido a ${historial.length} mensajes`);
-        }
-      }
-      
-      // MÉTODO 3: Usar conversación específica si tenemos convId
-      if ((!historial || historial.length === 0) && cosmosAvailable() && convId && isFn(cosmos, 'getConversationForOpenAI')) {
-        console.log(`📚 Método 3: getConversationForOpenAI con convId específico...`);
-        historial = await cosmos.getConversationForOpenAI(convId, token, true);
-        console.log(`📚 Método 3 resultado: ${historial?.length || 0} mensajes`);
-        
-        if (historial && historial.length > 0) {
-          console.log(`📚 ✅ Método 3 exitoso - usando historial específico`);
-        }
-      }
-      
-    } catch (error) {
-      console.error('❌ Error obteniendo historial:', error.message);
+    } catch (historyError) {
+      console.error('❌ Error obteniendo contexto con history interno:', historyError.message);
       historial = [];
     }
 
-    // ✅ NUEVA VALIDACIÓN: Verificar que el historial contiene mensajes válidos
+    // ✅ FALLBACK: Si no hay contexto, intentar métodos directos
+    if (!historial || historial.length === 0) {
+      console.log(`🔄 === FALLBACK: MÉTODOS DIRECTOS PARA CONTEXTO ===`);
+      
+      try {
+        // Método fallback 1: getConversationForOpenAIByToken
+        if (cosmosAvailable() && isFn(cosmos, 'getConversationForOpenAIByToken')) {
+          console.log(`🔄 Fallback 1: getConversationForOpenAIByToken...`);
+          historial = await cosmos.getConversationForOpenAIByToken(token, true, 15);
+          
+          if (historial && historial.length > 0) {
+            console.log(`🔄 ✅ Fallback 1 exitoso: ${historial.length} mensajes`);
+          }
+        }
+        
+        // Método fallback 2: getMessagesByToken directo
+        if ((!historial || historial.length === 0) && cosmosAvailable() && isFn(cosmos, 'getMessagesByToken')) {
+          console.log(`🔄 Fallback 2: getMessagesByToken directo...`);
+          const messages = await cosmos.getMessagesByToken(token, { limit: 15 });
+          
+          if (messages && messages.length > 0) {
+            historial = messages.map(m => ({ role: m.role, content: m.content }));
+            console.log(`🔄 ✅ Fallback 2 exitoso: ${historial.length} mensajes`);
+          }
+        }
+        
+      } catch (fallbackError) {
+        console.error('❌ Error en métodos fallback:', fallbackError.message);
+        historial = [];
+      }
+    }
+
+    // ✅ VALIDACIÓN Y LIMPIEZA FINAL DEL HISTORIAL
     if (historial && historial.length > 0) {
       // Filtrar mensajes inválidos
       const validHistorial = historial.filter(msg => 
@@ -593,42 +625,34 @@ export async function ask(req, res) {
         msg.content && 
         msg.content.trim() !== '' &&
         msg.content !== 'undefined' &&
-        msg.content !== 'null'
+        msg.content !== 'null' &&
+        !msg.content.includes('[Conversación reiniciada')
       );
       
       if (validHistorial.length !== historial.length) {
         console.log(`🔧 Filtrados ${historial.length - validHistorial.length} mensajes inválidos`);
         historial = validHistorial;
       }
-    }
 
-    // Log detallado del historial para debug
-    if (historial && historial.length > 0) {
-      console.log(`📚 === HISTORIAL ENCONTRADO ===`);
+      // Log final del contexto
+      console.log(`📚 === CONTEXTO FINAL PARA OPENAI ===`);
       console.log(`📚 Total mensajes: ${historial.length}`);
-      console.log(`📚 Primer mensaje: ${historial[0]?.role}: ${historial[0]?.content?.substring(0, 50)}...`);
-      console.log(`📚 Último mensaje: ${historial[historial.length - 1]?.role}: ${historial[historial.length - 1]?.content?.substring(0, 50)}...`);
-      
-      // Mostrar contexto completo para debug (solo primeros y últimos 2)
-      console.log(`📚 Contexto completo:`);
-      const showMessages = historial.length <= 4 ? historial : [...historial.slice(0, 2), ...historial.slice(-2)];
-      showMessages.forEach((msg, idx) => {
-        const actualIdx = historial.length <= 4 ? idx : (idx < 2 ? idx : historial.length - (4 - idx));
-        console.log(`   ${actualIdx + 1}. ${msg.role}: ${msg.content?.substring(0, 80)}...`);
-      });
-      if (historial.length > 4) {
-        console.log(`   [...${historial.length - 4} mensajes más...]`);
+      if (historial.length > 0) {
+        console.log(`📚 Contexto completo:`);
+        historial.forEach((msg, idx) => {
+          console.log(`   ${idx + 1}. ${msg.role}: ${msg.content.substring(0, 80)}...`);
+        });
       }
     } else {
-      console.warn(`⚠️ === NO SE ENCONTRÓ HISTORIAL ===`);
-      console.warn(`⚠️ Token: ${token?.substring(0, 8)}...`);
-      console.warn(`⚠️ ConversationId: ${convId}`);
-      console.warn(`⚠️ Cosmos disponible: ${cosmosAvailable()}`);
+      console.warn(`⚠️ === SIN CONTEXTO DISPONIBLE ===`);
     }
 
-    // Procesar con la IA
-    console.log(`🤖 === PROCESANDO CON IA ===`);
-    console.log(`🤖 Enviando a IA:`, {
+    // ✅ PROCESAR CON OPENAI CON EL CONTEXTO OBTENIDO
+    console.log(`🤖 === PROCESANDO CON OPENAI ===`);
+    
+    const userInfo = { usuario: CveUsuario, nombre: `Usuario ${CveUsuario || 'Anónimo'}`, token };
+    
+    console.log(`🤖 Enviando a OpenAI:`, {
       contentLength: content?.length,
       historialLength: historial?.length,
       userToken: token?.substring(0, 8) + '...',
@@ -638,12 +662,13 @@ export async function ask(req, res) {
     
     const response = await ai.procesarMensaje(
       content,
-      historial || [], // Asegurar que siempre sea array
+      historial || [], // Contexto obtenido del /history
       token,
       userInfo,
       convId
     );
 
+    // ✅ PROCESAR RESPUESTA DE OPENAI
     let replyText = '';
     let citations = null;
 
@@ -660,7 +685,7 @@ export async function ask(req, res) {
       replyText = 'No se pudo procesar la respuesta';
     }
 
-    // Guardar respuesta del asistente
+    // ✅ GUARDAR RESPUESTA DEL ASISTENTE
     console.log(`💾 === GUARDANDO RESPUESTA DEL ASISTENTE ===`);
     try {
       if (isFn(cosmos, 'appendMessage')) {
@@ -684,7 +709,7 @@ export async function ask(req, res) {
     console.log(`✅ === ASK COMPLETADO EXITOSAMENTE ===`);
     console.log(`    - ConversationId final: ${convId}`);
     console.log(`    - Respuesta length: ${replyText?.length}`);
-    console.log(`    - Historial usado: ${historial?.length || 0} mensajes`);
+    console.log(`    - Contexto usado: ${historial?.length || 0} mensajes (vía /history)`);
 
     return res.json({
       success: true,
@@ -696,12 +721,12 @@ export async function ask(req, res) {
         usage: response?.metadata?.usage || null,
         contextLength: historial?.length || 0,
         conversationContinued: !!(historial && historial.length > 0),
-        // ✅ NUEVO: Información de debug para monitoreo
+        contextSource: 'history_endpoint', // Indicar que se usó /history
         debug: {
           tokenUsed: token?.substring(0, 8) + '...',
           conversationIdFound: !!conversationId,
           conversationIdUsed: convId,
-          historialMethodsAttempted: ['getConversationForOpenAIByToken', 'getMessagesByToken', 'getConversationForOpenAI'],
+          historyMethodUsed: 'internal_history_endpoint',
           messagesValidated: historial?.length || 0
         }
       }
@@ -727,6 +752,58 @@ export async function ask(req, res) {
       }
     });
   }
+}
+
+// ✅ FUNCIÓN AUXILIAR: Llamar al endpoint /history internamente
+async function getHistoryInternal(token, limit = 20) {
+  try {
+    console.log(`📚 Llamando history interno para token: ${token.substring(0, 8)}...`);
+    
+    // Simular la llamada al endpoint history
+    const mockReq = {
+      query: { token, limit }
+    };
+    
+    const mockRes = {
+      json: (data) => data,
+      status: (code) => ({ json: (data) => ({ ...data, statusCode: code }) })
+    };
+    
+    // Llamar al método history directamente
+    const result = await history(mockReq, mockRes);
+    
+    console.log(`📚 History interno resultado:`, {
+      success: result.success,
+      itemCount: result.items?.length || 0,
+      method: result.debug?.method || 'unknown'
+    });
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error en getHistoryInternal:', error);
+    return { success: false, items: [], error: error.message };
+  }
+}
+
+// ✅ FUNCIÓN AUXILIAR: Filtrar mensajes duplicados consecutivos
+function filterDuplicateMessages(messages) {
+  if (!messages || messages.length === 0) return messages;
+  
+  const filtered = [messages[0]]; // Siempre incluir el primer mensaje
+  
+  for (let i = 1; i < messages.length; i++) {
+    const current = messages[i];
+    const previous = messages[i - 1];
+    
+    // Evitar mensajes duplicados consecutivos
+    if (current.content !== previous.content || current.role !== previous.role) {
+      filtered.push(current);
+    }
+  }
+  
+  console.log(`🔧 Filtro duplicados: ${messages.length} → ${filtered.length} mensajes`);
+  return filtered;
 }
 
 /* ============================================================
