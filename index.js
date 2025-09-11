@@ -231,6 +231,61 @@ async function startServer() {
     });
   });
 
+  // ✅ Ruta raíz con información del servidor
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Nova Multi-Bot Server',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    activeBots: activeBots.length,
+    totalConfigurations: BOT_CONFIGS.length,
+    endpoints: {
+      bots: activeBots.map(bot => ({
+        name: bot.config.name,
+        endpoint: bot.config.endpoint
+      })),
+      documents: [
+        'POST /api/sendPdf',
+        'POST /api/sendWord'
+      ],
+      webchat: [
+        'POST /api/webchat/init',
+        'POST /api/webchat/ask',
+        'GET /api/webchat/history',
+        'GET /api/webchat/stream'
+      ],
+      info: [
+        'GET /api/bots',
+        'GET /api/bots/:botId',
+        'GET /api/cors-test',
+        'GET /health'
+      ]
+    }
+  });
+});
+
+// ✅ Manejar peticiones HEAD para la raíz (healthcheck común)
+app.head('/', (req, res) => {
+  res.status(200).end();
+});
+
+// ✅ Ruta simple de bienvenida (opcional)
+app.get('/welcome', (req, res) => {
+  res.send(`
+    <html>
+      <head><title>Nova Multi-Bot Server</title></head>
+      <body>
+        <h1>🤖 Nova Multi-Bot Server</h1>
+        <p>Servidor funcionando correctamente</p>
+        <p>Bots activos: ${activeBots.length}/${BOT_CONFIGS.length}</p>
+        <p>Timestamp: ${new Date().toISOString()}</p>
+        <a href="/api/bots">Ver información de bots</a>
+      </body>
+    </html>
+  `);
+});
+
   // ✅ Endpoint para verificar CORS
   app.get('/api/cors-test', (req, res) => {
     res.json({ 
