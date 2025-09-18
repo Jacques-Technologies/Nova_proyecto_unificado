@@ -69,7 +69,8 @@ pdfRoutes.post('/sendPdf', upload.single('pdfFile'), async (req, res) => {
                 Embedding: embedding,
                 Folder: req.body.Folder,
                 archivoid: req.body.archivoid,
-                Estado: "Nuevo"
+                Estado: req.body.Estado,
+                perfil: req.body.perfil
             };
         });
 
