@@ -70,7 +70,7 @@ pdfRoutes.post('/sendPdf', upload.single('pdfFile'), async (req, res) => {
                 Folder: req.body.Folder,
                 archivoid: req.body.archivoid,
                 Estado: req.body.Estado,
-                perfil: req.body.perfil
+                Perfil: req.body.perfil
             };
         });
 
