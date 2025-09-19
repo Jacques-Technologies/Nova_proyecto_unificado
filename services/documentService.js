@@ -1,4 +1,4 @@
-// services/documentService.js - VERSIÓN SIMPLIFICADA Y FUNCIONAL
+// services/documentService.js - VERSIÓN CON FILTRO DE PERFIL PARA WEB
 import 'dotenv/config';
 import { SearchClient, AzureKeyCredential } from '@azure/search-documents';
 import OpenAI from 'openai';
@@ -85,9 +85,10 @@ export default class DocumentService {
         }
     }
 
-    // MÉTODO PRINCIPAL - SOLO BUSCAR Y DEVOLVER CONTENIDO REAL
+    // MÉTODO PRINCIPAL - AHORA ACEPTA PERFIL
     async buscarDocumentos(consulta, userId = 'unknown', options = {}) {
-        console.log(`[${userId}] Buscando: "${consulta}"`);
+        const { perfil = null } = options;
+        console.log(`[${userId}] Buscando: "${consulta}", Perfil: ${perfil || 'sin filtro'}`);
         
         if (!this.searchAvailable) {
             return `Error: Servicio de búsqueda no disponible. ${this.initializationError || ''}`;
@@ -96,14 +97,14 @@ export default class DocumentService {
         try {
             // Primero intentar búsqueda vectorial si OpenAI está disponible
             if (this.openaiAvailable) {
-                const resultadoVectorial = await this.busquedaVectorial(consulta, userId, options);
+                const resultadoVectorial = await this.busquedaVectorial(consulta, userId, { perfil, ...options });
                 if (resultadoVectorial && resultadoVectorial.length > 100) {
                     return resultadoVectorial;
                 }
             }
 
-            // Fallback a búsqueda textual
-            return await this.busquedaTextual(consulta, userId, options);
+            // Fallback a búsqueda textual con filtro de perfil
+            return await this.busquedaTextual(consulta, userId, { perfil, ...options });
 
         } catch (error) {
             console.error(`[${userId}] Error en búsqueda:`, error.message);
@@ -111,10 +112,11 @@ export default class DocumentService {
         }
     }
 
-    // BÚSQUEDA VECTORIAL
+    // BÚSQUEDA VECTORIAL CON FILTRO DE PERFIL
     async busquedaVectorial(consulta, userId, options) {
         try {
-            console.log(`[${userId}] Ejecutando búsqueda vectorial...`);
+            const { perfil } = options;
+            console.log(`[${userId}] Ejecutando búsqueda vectorial con perfil: ${perfil || 'sin filtro'}...`);
             
             // Generar embedding
             const embedding = await this.createEmbedding(consulta);
@@ -123,43 +125,67 @@ export default class DocumentService {
                 return null;
             }
 
-            // Buscar en Azure Search
-            const searchResults = await this.searchClient.search("*", {
+            // Construir configuración de búsqueda según la especificación
+            const searchOptions = {
+                count: true,
+                select: ['Chunk', 'archivoid', 'Folder', 'FileName', 'uniqueid', 'Perfil'],
+                vectorFilterMode: 'postFilter',
                 vectorQueries: [{
-                    kNearestNeighborsCount: 10,
+                    vector: embedding,
+                    k: 15,
                     fields: this.vectorField,
-                    vector: embedding
+                    kind: 'vector',
+                    exhaustive: true
                 }],
-                select: ['Chunk', 'FileName', 'Folder'],
-                top: 10
-            });
+                top: 15
+            };
+
+            // Agregar filtro de perfil si se especifica
+            if (perfil) {
+                searchOptions.filter = `search.in(Perfil, '${perfil}', '|')`;
+                console.log(`[${userId}] Aplicando filtro de perfil: ${searchOptions.filter}`);
+            }
+
+            // Buscar en Azure Search
+            const searchResults = await this.searchClient.search("*", searchOptions);
 
             // Procesar resultados
             const documentos = [];
+            let totalCount = 0;
+
             for await (const result of searchResults.results) {
+                totalCount++;
                 const doc = result.document || {};
                 const score = result.score || 0;
                 const chunk = (doc.Chunk || '').trim();
                 
-                // Filtros básicos
-                if (!chunk || chunk.length < 50 || score < 0.3) continue;
+                // Filtros básicos de calidad
+                if (!chunk || chunk.length < 50 || score < 0.3) {
+                    console.log(`[${userId}] Documento filtrado por calidad - Score: ${score}, Length: ${chunk.length}`);
+                    continue;
+                }
                 
                 documentos.push({
                     fileName: doc.FileName || 'Sin nombre',
                     folder: doc.Folder || '',
+                    archivoid: doc.archivoid || '',
+                    uniqueid: doc.uniqueid || '',
+                    perfil: doc.Perfil || '',
                     chunk: chunk,
                     score: score
                 });
                 
-                if (documentos.length >= 5) break;
+                if (documentos.length >= 10) break;
             }
 
+            console.log(`[${userId}] Búsqueda vectorial completada - Total encontrados: ${totalCount}, Válidos: ${documentos.length}`);
+
             if (documentos.length === 0) {
-                console.log(`[${userId}] Sin resultados en búsqueda vectorial`);
+                console.log(`[${userId}] Sin resultados válidos en búsqueda vectorial`);
                 return null;
             }
 
-            return this.formatearResultados(consulta, documentos, 'vectorial');
+            return this.formatearResultados(consulta, documentos, 'vectorial', perfil);
 
         } catch (error) {
             console.error(`[${userId}] Error en búsqueda vectorial:`, error.message);
@@ -167,44 +193,65 @@ export default class DocumentService {
         }
     }
 
-    // BÚSQUEDA TEXTUAL
+    // BÚSQUEDA TEXTUAL CON FILTRO DE PERFIL
     async busquedaTextual(consulta, userId, options) {
         try {
-            console.log(`[${userId}] Ejecutando búsqueda textual...`);
+            const { perfil } = options;
+            console.log(`[${userId}] Ejecutando búsqueda textual con perfil: ${perfil || 'sin filtro'}...`);
             
             const queryLimpia = this.limpiarQuery(consulta);
             
-            const searchResults = await this.searchClient.search(queryLimpia, {
-                select: ['Chunk', 'FileName', 'Folder'],
-                top: 10,
+            const searchOptions = {
+                select: ['Chunk', 'archivoid', 'Folder', 'FileName', 'uniqueid', 'Perfil'],
+                top: 15,
                 searchMode: 'all',
                 queryType: 'full',
-                searchFields: ['Chunk', 'FileName', 'Folder']
-            });
+                searchFields: ['Chunk', 'FileName', 'Folder'],
+                count: true
+            };
+
+            // Agregar filtro de perfil si se especifica
+            if (perfil) {
+                searchOptions.filter = `search.in(Perfil, '${perfil}', '|')`;
+                console.log(`[${userId}] Aplicando filtro textual de perfil: ${searchOptions.filter}`);
+            }
+
+            const searchResults = await this.searchClient.search(queryLimpia, searchOptions);
 
             const documentos = [];
+            let totalCount = 0;
+
             for await (const result of searchResults.results) {
+                totalCount++;
                 const doc = result.document || {};
                 const chunk = (doc.Chunk || '').trim();
                 
                 // Filtros básicos
-                if (!chunk || chunk.length < 50) continue;
+                if (!chunk || chunk.length < 50) {
+                    console.log(`[${userId}] Documento filtrado en búsqueda textual - Length: ${chunk.length}`);
+                    continue;
+                }
                 
                 documentos.push({
                     fileName: doc.FileName || 'Sin nombre',
                     folder: doc.Folder || '',
+                    archivoid: doc.archivoid || '',
+                    uniqueid: doc.uniqueid || '',
+                    perfil: doc.Perfil || '',
                     chunk: chunk,
                     score: result.score || 0
                 });
                 
-                if (documentos.length >= 5) break;
+                if (documentos.length >= 10) break;
             }
+
+            console.log(`[${userId}] Búsqueda textual completada - Total encontrados: ${totalCount}, Válidos: ${documentos.length}`);
 
             if (documentos.length === 0) {
-                return `No se encontraron documentos relevantes para: "${consulta}"`;
+                return `No se encontraron documentos relevantes para: "${consulta}"${perfil ? ` (perfil: ${perfil})` : ''}`;
             }
 
-            return this.formatearResultados(consulta, documentos, 'textual');
+            return this.formatearResultados(consulta, documentos, 'textual', perfil);
 
         } catch (error) {
             console.error(`[${userId}] Error en búsqueda textual:`, error.message);
@@ -212,13 +259,19 @@ export default class DocumentService {
         }
     }
 
-    // FORMATEAR RESULTADOS - SOLO MOSTRAR CONTENIDO REAL DE LOS ARCHIVOS
-    formatearResultados(consulta, documentos, tipoBusqueda) {
-        let resultado = `Información encontrada sobre: "${consulta}"\n\n`;
+    // FORMATEAR RESULTADOS CON INFORMACIÓN DE PERFIL
+    formatearResultados(consulta, documentos, tipoBusqueda, perfil = null) {
+        let resultado = `Información encontrada sobre: "${consulta}"`;
+        if (perfil) {
+            resultado += ` (perfil: ${perfil})`;
+        }
+        resultado += `\n\n`;
         
         // Mostrar solo el contenido real de los documentos encontrados
         documentos.forEach((doc, index) => {
             resultado += `**Documento ${index + 1}: ${doc.fileName}**\n`;
+            if (doc.folder) resultado += `*Carpeta: ${doc.folder}*\n`;
+            if (doc.perfil) resultado += `*Perfil: ${doc.perfil}*\n`;
             resultado += `${doc.chunk}\n\n`;
             resultado += `---\n\n`;
         });
@@ -226,6 +279,9 @@ export default class DocumentService {
         // Información de la búsqueda al final
         resultado += `*Fuentes: ${documentos.length} documento(s) encontrado(s)*\n`;
         resultado += `*Tipo de búsqueda: ${tipoBusqueda}*`;
+        if (perfil) {
+            resultado += `\n*Filtrado por perfil: ${perfil}*`;
+        }
         
         return resultado;
     }
@@ -278,7 +334,8 @@ export default class DocumentService {
             indexName: this.indexName || 'No configurado',
             vectorField: this.vectorField || 'No configurado',
             embeddingModel: this.embeddingModel || 'No configurado',
-            error: this.initializationError
+            error: this.initializationError,
+            supportsProfileFilter: true
         };
     }
 
@@ -324,8 +381,49 @@ export default class DocumentService {
         }
     }
 
+    // MÉTODO DE PRUEBA PARA FILTROS DE PERFIL
+    async testProfileFilter(perfil) {
+        if (!this.searchAvailable) {
+            return { success: false, error: 'Servicio no disponible' };
+        }
+
+        try {
+            console.log(`Probando filtro de perfil: ${perfil}`);
+            
+            const searchOptions = {
+                select: ['FileName', 'Perfil'],
+                filter: `search.in(Perfil, '${perfil}', '|')`,
+                top: 5,
+                count: true
+            };
+
+            const results = await this.searchClient.search("*", searchOptions);
+            
+            const documentos = [];
+            let totalCount = 0;
+
+            for await (const result of results.results) {
+                totalCount++;
+                documentos.push({
+                    fileName: result.document.FileName,
+                    perfil: result.document.Perfil
+                });
+            }
+
+            return {
+                success: true,
+                totalCount,
+                documentos,
+                filter: searchOptions.filter
+            };
+
+        } catch (error) {
+            console.error('Error probando filtro de perfil:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
     cleanup() {
         console.log('Document Service limpiado');
     }
 }
-
