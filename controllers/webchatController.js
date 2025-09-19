@@ -29,6 +29,7 @@ export async function init(req, res) {
     const token      = req.query.token      || req.body?.token;
     const CveUsuario = req.query.CveUsuario || req.body?.CveUsuario || null;
     const NumRI      = req.query.NumRI      || req.body?.NumRI      || null;
+    const Perfil     = req.query.profile    || req.body?.profile     || null;
 
     console.log(`📝 WebChat INIT - Token: ${token?.substring(0, 8)}..., CveUsuario: ${CveUsuario}, NumRI: ${NumRI}`);
 
