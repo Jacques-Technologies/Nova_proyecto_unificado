@@ -99,9 +99,14 @@ Cada bot tiene su propio:
 handleMembersAdded()        // Bienvenida + login card
 
 // ==========================================
-// FLUJO PRINCIPAL (40L)
+// ADAPTIVE CARDS (65L)
 // ==========================================
-handleMessage()             // Router: login/logout/IA
+onAdaptiveCardInvoke()     // Maneja invokes modernos (type: invoke)
+
+// ==========================================
+// FLUJO PRINCIPAL (70L)
+// ==========================================
+handleMessage()             // Router: login/logout/IA + submits legacy
 processWithAI()            // Procesar con OpenAI
 
 // ==========================================
@@ -110,7 +115,6 @@ processWithAI()            // Procesar con OpenAI
 handleLoginCommands()       // Router de login
 showLoginCard()            // Mostrar tarjeta
 loginWithText()            // Login: usuario:password
-loginWithCard()            // Login: adaptive card
 authenticate()             // Autenticación común
 logout()                   // Cerrar sesión
 showAccessDenied()         // Acceso denegado
@@ -158,6 +162,97 @@ handleMessage() → processWithAI()
 - `card-login` / `login-card` - Mostrar tarjeta de login
 - `logout` / `cerrar sesión` / `salir` - Cerrar sesión
 - **TODO lo demás** → Se envía a IA para procesamiento natural
+
+---
+
+### **🎴 Adaptive Cards - Sistema de Login**
+
+**IMPORTANTE:** El sistema soporta **2 modos** de recepción de Adaptive Cards:
+
+#### **Modo 1: Invoke moderno (Bot Framework v4+)**
+```javascript
+// Activity recibido:
+{
+  type: 'invoke',
+  name: 'adaptiveCard/action',
+  value: { action: 'login', username: '...', password: '...' }
+}
+
+// Manejado por: onAdaptiveCardInvoke()
+async onAdaptiveCardInvoke(context, invokeValue) {
+    const data = context.activity.value || invokeValue;
+    if (data.action === 'login') {
+        // Procesar login
+    }
+    // DEBE retornar InvokeResponse
+    return { statusCode: 200, type: '...', value: {...} };
+}
+```
+
+#### **Modo 2: Message legacy (manifiestos antiguos)**
+```javascript
+// Activity recibido:
+{
+  type: 'message',
+  text: '',  // vacío
+  value: { action: 'login', username: '...', password: '...' }
+}
+
+// Manejado por: handleMessage()
+async handleMessage(context, next) {
+    // Detectar submit sin texto pero con value
+    if (context.activity.value && !text) {
+        const submitData = context.activity.value;
+        if (submitData.action === 'login') {
+            await this.authenticate(context, username, password, userId);
+            return await next();
+        }
+    }
+}
+```
+
+**⚠️ Regla crítica:**
+- `onAdaptiveCardInvoke()` **NO se llama** desde el constructor
+- Es un método que **sobrescribe** el base de `TeamsActivityHandler`
+- El Bot Framework lo llama automáticamente cuando detecta `activity.name === 'adaptiveCard/action'`
+
+**Estructura de la tarjeta (cards/loginCard.js):**
+```javascript
+{
+    type: 'AdaptiveCard',
+    version: '1.0',
+    body: [
+        { type: 'Input.Text', id: 'username', placeholder: '...' },
+        { type: 'Input.Text', id: 'password', style: 'Password' }
+    ],
+    actions: [{
+        type: 'Action.Submit',
+        title: '🚀 Iniciar Sesión',
+        data: { action: 'login' }  // ← CLAVE para identificar la acción
+    }]
+}
+```
+
+**Flujo completo:**
+```
+Usuario presiona "Submit" en card
+    ↓
+Teams/Outlook envía POST /api/messages
+    ↓
+CloudAdapter procesa request
+    ↓
+ActivityHandler.onInvokeActivity() detecta activity.name
+    ↓
+Si name === 'adaptiveCard/action':
+    → Llama a onAdaptiveCardInvoke()
+    → Procesa login
+    → Retorna InvokeResponse
+
+Si type === 'message' con value:
+    → Llama a handleMessage()
+    → Detecta context.activity.value
+    → Procesa login (modo legacy)
+```
 
 ---
 
@@ -438,6 +533,48 @@ curl http://localhost:3978/api/bots
 ```bash
 curl http://localhost:3978/api/webchat/status
 ```
+
+### Logs de debugging para Adaptive Cards
+
+El sistema incluye logs detallados en 4 niveles para diagnosticar problemas:
+
+1. **index.js** - Request HTTP original
+```
+📨 ========== REQUEST RECIBIDO ==========
+   Activity Type: invoke/message
+   Activity Name: adaptiveCard/action
+   Has Value: true
+```
+
+2. **dialogBot.js** - Actividad procesada
+```
+🤖 [DialogBot] handleMessage llamado
+   Type: invoke/message
+   Name: adaptiveCard/action
+```
+
+3. **teamsBot.js handleMessage** - Detección de submits
+```
+🔍 ========== ACTIVITY DEBUG ==========
+   Type: message
+   Has Value: true
+   Value: {...}
+
+🎴 SUBMIT DE ADAPTIVE CARD DETECTADO (type: message con value)
+```
+
+4. **teamsBot.js onAdaptiveCardInvoke** - Invokes modernos
+```
+🔔 ========== onAdaptiveCardInvoke LLAMADO ==========
+   Activity type: invoke
+   Activity name: adaptiveCard/action
+```
+
+**Tip:** Si las Adaptive Cards no funcionan, revisa estos logs para identificar:
+- ✅ Si el request llega al servidor
+- ✅ Qué tipo de activity es (invoke vs message)
+- ✅ Si tiene el campo `value` con los datos
+- ✅ Qué método está manejando el submit
 
 ---
 
