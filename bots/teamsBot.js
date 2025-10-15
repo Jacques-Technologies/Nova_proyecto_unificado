@@ -75,28 +75,13 @@ export default class TeamsBot extends DialogBot {
         const userId = context.activity.from.id;
         const text = (context.activity.text || '').trim();
 
-        // 🔍 DEBUG: Log completo de la actividad
-        console.log(`\n🔍 ========== ACTIVITY DEBUG ==========`);
-        console.log(`   Type: ${context.activity.type}`);
-        console.log(`   Name: ${context.activity.name || 'N/A'}`);
-        console.log(`   Text: ${text || '(vacío)'}`);
-        console.log(`   Has Value: ${!!context.activity.value}`);
-        if (context.activity.value) {
-            console.log(`   Value:`, JSON.stringify(context.activity.value).substring(0, 200));
-        }
-        console.log(`🔍 =====================================\n`);
-
         // ⚡ ADAPTIVE CARD SUBMIT: Detectar type='message' con value (sin texto)
         // Esto ocurre cuando el usuario presiona "Submit" en una Adaptive Card
         if (context.activity.value && !text) {
-            console.log(`🎴 SUBMIT DE ADAPTIVE CARD DETECTADO`);
-            console.log(`   Data recibido:`, context.activity.value);
-
             const submitData = context.activity.value;
 
             // Login desde Adaptive Card
             if (submitData.action === 'login') {
-                console.log(`🔐 Autenticando: ${submitData.username}`);
                 const { username, password } = submitData;
 
                 if (!username || !password) {

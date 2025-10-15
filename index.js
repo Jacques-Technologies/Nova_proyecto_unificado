@@ -155,18 +155,6 @@ async function startServer() {
       // ✅ REGISTRAR ENDPOINT PARA CADA BOT
       app.post(config.endpoint, async (req, res) => {
         try {
-          console.log(`\n📨 ========== REQUEST RECIBIDO ==========`);
-          console.log(`   Endpoint: ${config.endpoint}`);
-          console.log(`   Bot: ${config.name}`);
-          console.log(`   Activity Type: ${req.body.type || 'N/A'}`);
-          console.log(`   Activity Name: ${req.body.name || 'N/A'}`);
-          console.log(`   Has Text: ${!!req.body.text}`);
-          console.log(`   Has Value: ${!!req.body.value}`);
-          if (req.body.value) {
-            console.log(`   Value Preview:`, JSON.stringify(req.body.value).substring(0, 150));
-          }
-          console.log(`📨 ========================================\n`);
-
           await botInstance.adapter.process(req, res, (context) => botInstance.bot.run(context));
         } catch (err) {
           console.error(`❌ Error procesando mensaje en ${config.name}:`, err);
