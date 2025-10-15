@@ -36,9 +36,6 @@ export default class TeamsBot extends DialogBot {
         this.ai = ai;
         this.loginCards = new Set(); // Anti-spam de login cards
 
-        this.onMembersAdded(this.handleMembersAdded.bind(this));
-        this.onMessage(this.handleMessage.bind(this));
-
         console.log('✅ TeamsBot v4.0 inicializado');
         console.log(`💾 Cosmos DB: ${cosmos.isAvailable() ? 'Activo' : 'No disponible'}`);
         console.log(`🤖 OpenAI: ${ai.isAvailable() ? 'Activo' : 'No disponible'}`);
@@ -70,6 +67,77 @@ export default class TeamsBot extends DialogBot {
     }
 
     // ==========================================
+    // MANEJO DE ADAPTIVE CARDS
+    // ==========================================
+    // ⚠️ CRÍTICO: Este método SOBRESCRIBE el método base de TeamsActivityHandler
+    // NO llamar desde el constructor - el Bot Framework lo invoca automáticamente
+
+    async onAdaptiveCardInvoke(context, invokeValue) {
+        console.log(`🔔 onAdaptiveCardInvoke LLAMADO`);
+        console.log(`   Activity type: ${context.activity.type}`);
+        console.log(`   Activity name: ${context.activity.name}`);
+        console.log(`   invokeValue:`, JSON.stringify(invokeValue).substring(0, 200));
+        console.log(`   activity.value:`, JSON.stringify(context.activity.value).substring(0, 200));
+
+        const userId = context.activity.from.id;
+        const data = context.activity.value || invokeValue;
+
+        console.log(`🎴 [${userId.substring(0, 8)}...] Card recibido: ${data.action || 'unknown'}`);
+
+        // Helper para crear response card
+        const createResponse = (text, color = 'Attention') => ({
+            statusCode: 200,
+            type: 'application/vnd.microsoft.card.adaptive',
+            value: {
+                type: 'AdaptiveCard',
+                version: '1.4',
+                body: [{ type: 'TextBlock', text, wrap: true, color }]
+            }
+        });
+
+        try {
+            if (data.action === 'login') {
+                const { username, password } = data;
+                if (!username || !password) {
+                    return createResponse('❌ Completa usuario y contraseña');
+                }
+
+                // Typing indicator para mejor UX
+                await context.sendActivity({ type: 'typing' });
+
+                console.log(`🔐 [${userId.substring(0, 8)}...] Autenticando: ${username}`);
+                const result = await auth.authenticateWithNova(username.trim(), password.trim());
+
+                if (result.success) {
+                    await auth.setUserAuthenticated(userId, result.userInfo);
+                    this.loginCards.delete(userId);
+                    console.log(`✅ [${userId.substring(0, 8)}...] Login exitoso`);
+
+                    const welcome = `✅ **¡Login exitoso!**\n\n` +
+                                  `👋 Bienvenido, **${result.userInfo.nombre}**\n` +
+                                  `👤 Usuario: ${result.userInfo.usuario}\n` +
+                                  `🔑 Token: ${result.userInfo.token.substring(0, 20)}...\n` +
+                                  (cosmos.isAvailable()
+                                      ? '💾 Cosmos DB activo - Conversaciones persistentes\n'
+                                      : '⚠️ Solo memoria - Conversaciones temporales\n') +
+                                  `\n💬 Ya puedes usar el bot normalmente.`;
+
+                    await context.sendActivity(welcome);
+                    return createResponse(`✅ Autenticado como ${result.userInfo.nombre}`, 'Good');
+                } else {
+                    console.log(`❌ [${userId.substring(0, 8)}...] Login fallido`);
+                    return createResponse(`❌ ${result.message || 'Credenciales inválidas'}`);
+                }
+            }
+
+            return { statusCode: 200 };
+        } catch (error) {
+            console.error(`❌ Error procesando card:`, error);
+            return createResponse('❌ Error procesando la tarjeta');
+        }
+    }
+
+    // ==========================================
     // FLUJO PRINCIPAL DE MENSAJES
     // ==========================================
 
@@ -81,7 +149,7 @@ export default class TeamsBot extends DialogBot {
 
         console.log(`📨 [${userId.substring(0, 8)}...] "${text.substring(0, 50)}..."`);
 
-        try {
+        try{
             // 1. Comandos de login (sin autenticación requerida)
             if (await this.handleLoginCommands(context, text, userId)) {
                 return await next();
@@ -181,12 +249,6 @@ export default class TeamsBot extends DialogBot {
             return true;
         }
 
-        // Submit de adaptive card
-        if (context.activity.value?.action === 'login') {
-            await this.loginWithCard(context, userId);
-            return true;
-        }
-
         return false;
     }
 
@@ -216,18 +278,6 @@ export default class TeamsBot extends DialogBot {
 
         if (!username || !password) {
             await context.sendActivity(createInvalidFormatMessage());
-            return;
-        }
-
-        await this.authenticate(context, username.trim(), password.trim(), userId);
-    }
-
-    async loginWithCard(context, userId) {
-        const { username, password } = context.activity.value || {};
-
-        if (!username || !password) {
-            await context.sendActivity('❌ Completa usuario y contraseña.');
-            await this.showLoginCard(context, userId);
             return;
         }
 
