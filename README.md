@@ -263,7 +263,6 @@ nova-bot/
 │   ├── 📄 openaiService.js      # ⭐ Servicio OpenAI simplificado
 │   └── 📄 conversationService.js # Servicio de conversaciones
 ├── 📁 utilities/
-│   ├── 📄 procesar_card.js      # Procesamiento de tarjetas
 │   └── 📄 http_utils.js         # Utilidades HTTP
 ├── 📄 index.js                  # ⭐ Servidor principal
 ├── 📄 package.json              # Dependencias del proyecto

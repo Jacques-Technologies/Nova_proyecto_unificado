@@ -41,3 +41,8 @@ node_modules/
 
 # build
 lib/
+
+# log files
+*.log
+logs/
+backend/services/log/register/*.log

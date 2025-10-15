@@ -1,0 +1,37 @@
+# Archivos y directorios a excluir del despliegue ZIP en Azure
+
+# Archivos de log
+*.log
+logs/
+backend/services/log/register/
+
+# Node modules (se reconstruyen en Azure)
+node_modules/
+
+# Archivos de desarrollo
+.git/
+.vscode/
+.DS_Store
+*.md
+!README.md
+
+# Archivos de entorno
+.env.local
+.env.development.local
+.env.test.local
+
+# Archivos de testing
+coverage/
+*.test.js
+*.spec.js
+
+# Archivos de build temporales
+.deployment
+lib/
+build/
+dist/
+
+# Archivos de documentación del proyecto (opcionales)
+CLAUDE.md
+MIGRACION_V3_COMPLETADA.md
+MIGRACION_V4_COMPLETADA.md

@@ -48,7 +48,10 @@ export default class DialogBot extends TeamsActivityHandler {
                 return await next();
             }
 
-            console.log(`[${context.activity.from.id}] DialogBot.handleMessage`);
+            console.log(`\n🤖 [DialogBot] handleMessage llamado`);
+            console.log(`   From: ${context.activity.from.id}`);
+            console.log(`   Type: ${context.activity.type}`);
+            console.log(`   Name: ${context.activity.name || 'N/A'}\n`);
 
         } catch (error) {
             console.error('DialogBot: Error en handleMessage:', error.message);

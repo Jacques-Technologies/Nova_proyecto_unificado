@@ -73,11 +73,12 @@ export default class TeamsBot extends DialogBot {
     // NO llamar desde el constructor - el Bot Framework lo invoca automáticamente
 
     async onAdaptiveCardInvoke(context, invokeValue) {
-        console.log(`🔔 onAdaptiveCardInvoke LLAMADO`);
+        console.log(`\n🔔 ========== onAdaptiveCardInvoke LLAMADO ==========`);
         console.log(`   Activity type: ${context.activity.type}`);
         console.log(`   Activity name: ${context.activity.name}`);
         console.log(`   invokeValue:`, JSON.stringify(invokeValue).substring(0, 200));
         console.log(`   activity.value:`, JSON.stringify(context.activity.value).substring(0, 200));
+        console.log(`🔔 ===================================================\n`);
 
         const userId = context.activity.from.id;
         const data = context.activity.value || invokeValue;
@@ -144,6 +145,38 @@ export default class TeamsBot extends DialogBot {
     async handleMessage(context, next) {
         const userId = context.activity.from.id;
         const text = (context.activity.text || '').trim();
+
+        // 🔍 DEBUG: Log completo de la actividad
+        console.log(`\n🔍 ========== ACTIVITY DEBUG ==========`);
+        console.log(`   Type: ${context.activity.type}`);
+        console.log(`   Name: ${context.activity.name || 'N/A'}`);
+        console.log(`   Text: ${text || '(vacío)'}`);
+        console.log(`   Has Value: ${!!context.activity.value}`);
+        if (context.activity.value) {
+            console.log(`   Value:`, JSON.stringify(context.activity.value).substring(0, 200));
+        }
+        console.log(`🔍 =====================================\n`);
+
+        // 🔍 DEBUG: Detectar si es un submit de Adaptive Card (legacy)
+        if (context.activity.value && !text) {
+            console.log(`🎴 SUBMIT DE ADAPTIVE CARD DETECTADO (type: message con value)`);
+            console.log(`   Data recibido:`, context.activity.value);
+
+            // Manejar como submit de card
+            const submitData = context.activity.value;
+            if (submitData.action === 'login') {
+                console.log(`🔐 Login desde card (legacy mode)`);
+                const { username, password } = submitData;
+
+                if (!username || !password) {
+                    await context.sendActivity('❌ Completa usuario y contraseña');
+                    return await next();
+                }
+
+                await this.authenticate(context, username.trim(), password.trim(), userId);
+                return await next();
+            }
+        }
 
         if (!text) return await next();
 
