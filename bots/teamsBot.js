@@ -114,14 +114,7 @@ export default class TeamsBot extends DialogBot {
                     this.loginCards.delete(userId);
                     console.log(`✅ [${userId.substring(0, 8)}...] Login exitoso`);
 
-                    const welcome = `✅ **¡Login exitoso!**\n\n` +
-                                  `👋 Bienvenido, **${result.userInfo.nombre}**\n` +
-                                  `👤 Usuario: ${result.userInfo.usuario}\n` +
-                                  `🔑 Token: ${result.userInfo.token.substring(0, 20)}...\n` +
-                                  (cosmos.isAvailable()
-                                      ? '💾 Cosmos DB activo - Conversaciones persistentes\n'
-                                      : '⚠️ Solo memoria - Conversaciones temporales\n') +
-                                  `\n💬 Ya puedes usar el bot normalmente.`;
+                    const welcome = `✅ ¡Bienvenido ${result.userInfo.nombre}!`;
 
                     await context.sendActivity(welcome);
                     return createResponse(`✅ Autenticado como ${result.userInfo.nombre}`, 'Good');
@@ -327,12 +320,9 @@ export default class TeamsBot extends DialogBot {
                 await auth.setUserAuthenticated(userId, result.userInfo);
                 this.loginCards.delete(userId);
 
-                const welcome = createWelcomeMessage(result.userInfo);
-                const persistence = cosmos.isAvailable()
-                    ? '\n💾 Conversaciones guardadas en Cosmos DB'
-                    : '\n⚠️ Conversaciones solo en memoria';
+                const welcome = `✅ ¡Bienvenido ${result.userInfo.nombre}!`;
 
-                await context.sendActivity(welcome + persistence);
+                await context.sendActivity(welcome);
                 console.log(`✅ [${userId.substring(0, 8)}...] Login exitoso: ${username}`);
             } else {
                 await context.sendActivity(createAuthErrorMessage(result.message));
