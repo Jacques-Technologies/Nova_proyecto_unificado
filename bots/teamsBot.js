@@ -25,7 +25,8 @@ const auth = new AuthService(cosmos);
  * - ✅ Sin comandos especiales (solo login/logout)
  * - ✅ Todo mensaje autenticado → IA
  * - ✅ Stateless (sobrevive reinicios)
- * - ✅ ~350 líneas (vs 835 en v3.0)
+ * - ✅ Adaptive Cards con manejo legacy (type: message)
+ * - ✅ ~280 líneas (vs 835 en v3.0)
  */
 export default class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
@@ -67,71 +68,6 @@ export default class TeamsBot extends DialogBot {
     }
 
     // ==========================================
-    // MANEJO DE ADAPTIVE CARDS
-    // ==========================================
-    // ⚠️ CRÍTICO: Este método SOBRESCRIBE el método base de TeamsActivityHandler
-    // NO llamar desde el constructor - el Bot Framework lo invoca automáticamente
-
-    async onAdaptiveCardInvoke(context, invokeValue) {
-        console.log(`\n🔔 ========== onAdaptiveCardInvoke LLAMADO ==========`);
-        console.log(`   Activity type: ${context.activity.type}`);
-        console.log(`   Activity name: ${context.activity.name}`);
-        console.log(`   invokeValue:`, JSON.stringify(invokeValue).substring(0, 200));
-        console.log(`   activity.value:`, JSON.stringify(context.activity.value).substring(0, 200));
-        console.log(`🔔 ===================================================\n`);
-
-        const userId = context.activity.from.id;
-        const data = context.activity.value || invokeValue;
-
-        console.log(`🎴 [${userId.substring(0, 8)}...] Card recibido: ${data.action || 'unknown'}`);
-
-        // Helper para crear response card
-        const createResponse = (text, color = 'Attention') => ({
-            statusCode: 200,
-            type: 'application/vnd.microsoft.card.adaptive',
-            value: {
-                type: 'AdaptiveCard',
-                version: '1.4',
-                body: [{ type: 'TextBlock', text, wrap: true, color }]
-            }
-        });
-
-        try {
-            if (data.action === 'login') {
-                const { username, password } = data;
-                if (!username || !password) {
-                    return createResponse('❌ Completa usuario y contraseña');
-                }
-
-                // Typing indicator para mejor UX
-                await context.sendActivity({ type: 'typing' });
-
-                console.log(`🔐 [${userId.substring(0, 8)}...] Autenticando: ${username}`);
-                const result = await auth.authenticateWithNova(username.trim(), password.trim());
-
-                if (result.success) {
-                    await auth.setUserAuthenticated(userId, result.userInfo);
-                    this.loginCards.delete(userId);
-                    console.log(`✅ [${userId.substring(0, 8)}...] Login exitoso`);
-
-                    const welcome = `✅ ¡Bienvenido ${result.userInfo.nombre}!`;
-
-                    await context.sendActivity(welcome);
-                    return createResponse(`✅ Autenticado como ${result.userInfo.nombre}`, 'Good');
-                } else {
-                    console.log(`❌ [${userId.substring(0, 8)}...] Login fallido`);
-                    return createResponse(`❌ ${result.message || 'Credenciales inválidas'}`);
-                }
-            }
-
-            return { statusCode: 200 };
-        } catch (error) {
-            console.error(`❌ Error procesando card:`, error);
-            return createResponse('❌ Error procesando la tarjeta');
-        }
-    }
-
-    // ==========================================
     // FLUJO PRINCIPAL DE MENSAJES
     // ==========================================
 
@@ -150,15 +86,17 @@ export default class TeamsBot extends DialogBot {
         }
         console.log(`🔍 =====================================\n`);
 
-        // 🔍 DEBUG: Detectar si es un submit de Adaptive Card (legacy)
+        // ⚡ ADAPTIVE CARD SUBMIT: Detectar type='message' con value (sin texto)
+        // Esto ocurre cuando el usuario presiona "Submit" en una Adaptive Card
         if (context.activity.value && !text) {
-            console.log(`🎴 SUBMIT DE ADAPTIVE CARD DETECTADO (type: message con value)`);
+            console.log(`🎴 SUBMIT DE ADAPTIVE CARD DETECTADO`);
             console.log(`   Data recibido:`, context.activity.value);
 
-            // Manejar como submit de card
             const submitData = context.activity.value;
+
+            // Login desde Adaptive Card
             if (submitData.action === 'login') {
-                console.log(`🔐 Login desde card (legacy mode)`);
+                console.log(`🔐 Autenticando: ${submitData.username}`);
                 const { username, password } = submitData;
 
                 if (!username || !password) {
