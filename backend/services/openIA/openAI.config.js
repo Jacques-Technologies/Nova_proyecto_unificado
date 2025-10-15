@@ -3,15 +3,29 @@ import { config } from "../../controllers/config/config.js";
 
 /**
  * Cliente de Azure OpenAI usando el SDK oficial de OpenAI con soporte Azure
+ * ✅ V4: Solo se crea si hay credenciales válidas
  */
-export const openAIClient = new OpenAI({
-  apiKey: config.AZURE_OPENAI_API_KEY,
-  baseURL: `${config.AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
-  defaultQuery: { 'api-version': '2025-01-01-preview' },
-  defaultHeaders: {
-    'api-key': config.AZURE_OPENAI_API_KEY,
-  },
-});
+let openAIClient = null;
+
+if (config.AZURE_OPENAI_API_KEY && config.AZURE_OPENAI_ENDPOINT) {
+  try {
+    openAIClient = new OpenAI({
+      apiKey: config.AZURE_OPENAI_API_KEY,
+      baseURL: `${config.AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-large`,
+      defaultQuery: { 'api-version': '2025-01-01-preview' },
+      defaultHeaders: {
+        'api-key': config.AZURE_OPENAI_API_KEY,
+      },
+    });
+    console.log('✅ OpenAI Client (backend) inicializado');
+  } catch (error) {
+    console.warn('⚠️ Error creando OpenAI Client (backend):', error.message);
+  }
+} else {
+  console.warn('⚠️ OpenAI (backend) no configurado: faltan AZURE_OPENAI_API_KEY o AZURE_OPENAI_ENDPOINT');
+}
+
+export { openAIClient };
 
 /**
  * Obtiene embeddings para un arreglo de textos usando Azure OpenAI.
@@ -21,19 +35,24 @@ export const openAIClient = new OpenAI({
  */
 export async function getEmbeddings(inputs) {
   console.warn('⚠️  getEmbeddings() está deprecated. Usa getEmbeddingsBatch() para mejor rendimiento.');
-  
+
+  // ✅ V4: Validar que el cliente esté disponible
+  if (!openAIClient) {
+    throw new Error('OpenAI Client no está configurado. Verifica las variables de entorno.');
+  }
+
   try {
     const embeddings = [];
-    
+
     for (const text of inputs) {
       const response = await openAIClient.embeddings.create({
         model: config.AZURE_OPENAI_DEPLOYMENT,
         input: text
       });
-      
+
       embeddings.push(response.data[0].embedding);
     }
-    
+
     return embeddings;
   } catch (error) {
     console.error('Error al obtener embeddings:', error);
@@ -50,6 +69,11 @@ export async function getEmbeddings(inputs) {
 export async function getEmbeddingsBatch(inputs, maxBatchSize = 50) {
   if (!inputs || inputs.length === 0) {
     return [];
+  }
+
+  // ✅ V4: Validar que el cliente esté disponible
+  if (!openAIClient) {
+    throw new Error('OpenAI Client no está configurado. Verifica las variables de entorno.');
   }
 
   try {

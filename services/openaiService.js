@@ -1,24 +1,39 @@
-// services/openaiService.js - VERSIÓN CORREGIDA CON CONFIGURACIÓN SEPARADA PARA EMBEDDINGS
+// services/openaiService.js - V3.1 REFACTORIZADO CON TOOLSSERVICE
 import 'dotenv/config';
 import OpenAI from 'openai';
 import { DateTime } from 'luxon';
-import axios from 'axios';
 
 import CosmosService from './cosmosService.js';
-import DocumentService from './documentService.js';
+import ToolsService from './toolsService.js';
 
-const cosmosService= new CosmosService();
-const documentService = new DocumentService();
+const cosmosService = new CosmosService();
+const toolsService = new ToolsService();
 
+/**
+ * AzureOpenAIService - Servicio principal para interacción con GPT-4
+ *
+ * Responsabilidades:
+ * 1. Gestionar cliente OpenAI (chat completions)
+ * 2. Gestionar cliente de embeddings (separado)
+ * 3. Procesar mensajes con contexto
+ * 4. Coordinar ejecución de herramientas vía ToolsService
+ *
+ * NO maneja:
+ * - Definición de tools → ToolsService
+ * - Ejecución de tools → ToolsService
+ * - Formateo de resultados → ToolsService
+ */
 export default class AzureOpenAIService {
   constructor() {
     this.initialized = false;
     this.openaiAvailable = false;
     this.embeddingAvailable = false;
-    this.tools = this.defineTools();
     this.embeddingModel = 'text-embedding-3-large';
-    
-    console.log('Inicializando Azure OpenAI Service...');
+
+    // Obtener definiciones de herramientas desde ToolsService
+    this.tools = toolsService.getToolDefinitions();
+
+    console.log('🤖 Inicializando Azure OpenAI Service...');
     this.initializeAzureOpenAI();
   }
 
@@ -67,19 +82,33 @@ export default class AzureOpenAIService {
       this.embeddingAvailable = true;
       this.initialized = true;
 
-      console.log('Azure OpenAI configurado correctamente');
-      console.log(`Modelo de chat: ${deploymentName}`);
-      console.log(`Modelo de embedding: ${embeddingDeployment}`);
+      console.log('✅ Azure OpenAI configurado correctamente');
+      console.log(`   • Modelo de chat: ${deploymentName}`);
+      console.log(`   • Modelo de embedding: ${embeddingDeployment}`);
+      console.log(`   • Herramientas disponibles: ${this.tools.length}`);
     } catch (error) {
-      console.error('Error inicializando Azure OpenAI:', error.message);
+      console.error('❌ Error inicializando Azure OpenAI:', error.message);
       this.openaiAvailable = false;
       this.embeddingAvailable = false;
       this.initialized = false;
     }
   }
 
-  // MÉTODO PRINCIPAL SIMPLIFICADO
-  async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
+  // ========================================
+  // MÉTODO PRINCIPAL
+  // ========================================
+
+  /**
+   * Procesa un mensaje del usuario con contexto completo
+   * @param {string} mensaje - Mensaje del usuario
+   * @param {Array} historial - Historial de mensajes (fallback)
+   * @param {string} userToken - Token JWT del usuario
+   * @param {Object} userInfo - Información del usuario
+   * @param {string} conversationId - ID de conversación (opcional)
+   * @param {string} userId - ID del usuario para Cosmos (Teams: "29:xxx", WebChat: token)
+   * @returns {Promise<Object>} { type, content, metadata }
+   */
+  async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null, userId = null) {
     try {
       if (!this.openaiAvailable) {
         return {
@@ -88,11 +117,12 @@ export default class AzureOpenAIService {
         };
       }
 
-      const userId = userInfo?.usuario || 'unknown';
-      console.log(`[${userId}] Procesando mensaje: "${mensaje}"`);
+      // userId para logs (fallback si no se proporciona explícitamente)
+      const logUserId = userId || userInfo?.usuario || 'unknown';
+      console.log(`💬 [${logUserId}] Procesando mensaje: "${mensaje.substring(0, 50)}..."`);
 
-      // Preparar mensajes para OpenAI
-      const messages = await this.prepararMensajes(mensaje, historial, userInfo, conversationId);
+      // Preparar mensajes para OpenAI (pasamos userId explícito para Cosmos)
+      const messages = await this.prepararMensajes(mensaje, historial, userInfo, conversationId, userId);
 
       // Configuración de la petición
       const requestConfig = {
@@ -115,10 +145,10 @@ export default class AzureOpenAIService {
       // Si hay tool_calls, procesarlos
       if (messageResponse.tool_calls) {
         return await this.procesarHerramientas(
-          messageResponse, 
-          messages, 
-          userToken, 
-          userInfo, 
+          messageResponse,
+          messages,
+          userToken,
+          userInfo,
           conversationId
         );
       }
@@ -133,7 +163,7 @@ export default class AzureOpenAIService {
       };
 
     } catch (error) {
-      console.error(`Error procesando mensaje:`, error);
+      console.error(`❌ Error procesando mensaje:`, error);
       return {
         type: 'text',
         content: `Error: ${error.message}`
@@ -141,13 +171,25 @@ export default class AzureOpenAIService {
     }
   }
 
-  // PREPARAR MENSAJES
-  async prepararMensajes(mensaje, historial, userInfo, conversationId) {
+  // ========================================
+  // PREPARACIÓN DE MENSAJES
+  // ========================================
+
+  /**
+   * Prepara array de mensajes para OpenAI con contexto completo
+   * @param {string} mensaje - Mensaje actual
+   * @param {Array} historial - Historial tradicional
+   * @param {Object} userInfo - Info del usuario
+   * @param {string} conversationId - ID de conversación
+   * @param {string} userId - ID del usuario para Cosmos (Teams: "29:xxx", WebChat: token)
+   * @returns {Promise<Array>} Mensajes en formato OpenAI
+   */
+  async prepararMensajes(mensaje, historial, userInfo, conversationId, userId) {
     let messages = [];
 
-    // System message
+    // System message con contexto actual
     const fechaActual = DateTime.now().setZone('America/Mexico_City');
-    const userContext = userInfo?.nombre 
+    const userContext = userInfo?.nombre
       ? `Usuario: ${userInfo.nombre} (${userInfo.usuario})`
       : 'Usuario no identificado';
 
@@ -168,20 +210,24 @@ INSTRUCCIONES:
 
     messages.push({ role: 'system', content: systemContent });
 
-    // Historial de Cosmos DB si está disponible
-    if (cosmosService?.isAvailable?.() && conversationId && userInfo?.usuario) {
+    // ✅ V3: Historial de Cosmos DB usando user_id explícito
+    // Para Teams: userId = "29:xxx..." (Teams ID)
+    // Para WebChat: userId = token JWT completo
+    if (cosmosService?.isAvailable?.() && userId) {
       try {
-        const conversacionCosmos = await cosmosService.getConversationForOpenAI(
-          conversationId, 
-          userInfo.usuario
-        );
-        if (conversacionCosmos?.length > 0) {
-          // Tomar solo las últimas 10 interacciones para no saturar
-          const recentMessages = conversacionCosmos.slice(-20);
-          messages.push(...recentMessages);
+        const mensajesCosmos = await cosmosService.getLastMessages(userId, 20);
+
+        if (mensajesCosmos && mensajesCosmos.length > 0) {
+          // Convertir a formato OpenAI
+          const mensajesFormato = mensajesCosmos.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }));
+          messages.push(...mensajesFormato);
+          console.log(`📚 Historial Cosmos cargado: ${mensajesFormato.length} mensajes (user_id: ${userId.substring(0,8)}...)`);
         }
       } catch (error) {
-        console.warn(`Error obteniendo historial Cosmos: ${error.message}`);
+        console.warn(`⚠️ Error obteniendo historial Cosmos: ${error.message}`);
       }
     }
 
@@ -190,137 +236,70 @@ INSTRUCCIONES:
       const recentHistory = historial.slice(-10);
       recentHistory.forEach(item => {
         if (item?.content?.trim() && item.role) {
-          messages.push({ 
-            role: item.role, 
-            content: item.content.trim() 
+          messages.push({
+            role: item.role,
+            content: item.content.trim()
           });
         }
       });
     }
 
     // Mensaje actual del usuario
-    messages.push({ 
-      role: 'user', 
+    messages.push({
+      role: 'user',
       content: mensaje.trim()
     });
 
     return messages;
   }
 
-  // DEFINIR HERRAMIENTAS
-  defineTools() {
-    return [
-      {
-        type: 'function',
-        function: {
-          name: 'buscar_documentos_nova',
-          description: 'Busca información específica en documentación interna de Nova Corporation (APIs, políticas, procedimientos)',
-          parameters: {
-            type: 'object',
-            properties: {
-              consulta: { 
-                type: 'string', 
-                description: 'Término específico a buscar en la documentación' 
-              }
-            },
-            required: ['consulta']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'obtener_fecha_hora_actual',
-          description: 'Obtiene fecha y hora actual en zona México',
-          parameters: {
-            type: 'object',
-            properties: {
-              formato: { 
-                type: 'string', 
-                enum: ['completo', 'fecha', 'hora'], 
-                default: 'completo' 
-              }
-            }
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'obtener_informacion_usuario',
-          description: 'Obtiene información del perfil del usuario autenticado',
-          parameters: {
-            type: 'object',
-            properties: {}
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'consultar_tasas_interes',
-          description: 'Consulta tasas de interés mensuales de Nova Corporation',
-          parameters: {
-            type: 'object',
-            properties: {
-              anio: { 
-                type: 'integer', 
-                minimum: 2020, 
-                maximum: 2030,
-                description: 'Año para consultar las tasas' 
-              }
-            },
-            required: ['anio']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'consultar_saldo_usuario',
-          description: 'Consulta saldos del usuario. Requiere autenticación.',
-          parameters: {
-            type: 'object',
-            properties: {}
-          }
-        }
-      }
-    ];
-  }
+  // ========================================
+  // PROCESAMIENTO DE HERRAMIENTAS
+  // ========================================
 
-  // PROCESAR HERRAMIENTAS
+  /**
+   * Procesa tool_calls ejecutando herramientas y obteniendo respuesta final
+   * @param {Object} messageResponse - Mensaje con tool_calls de OpenAI
+   * @param {Array} mensajesPrevios - Mensajes previos del contexto
+   * @param {string} userToken - Token JWT
+   * @param {Object} userInfo - Info del usuario
+   * @param {string} conversationId - ID de conversación
+   * @returns {Promise<Object>} Respuesta final formateada
+   */
   async procesarHerramientas(messageResponse, mensajesPrevios, userToken, userInfo, conversationId) {
     const userId = userInfo?.usuario || 'unknown';
     const resultados = [];
 
-    console.log(`[${userId}] Procesando ${messageResponse.tool_calls.length} herramienta(s)`);
+    console.log(`🔧 [${userId}] Procesando ${messageResponse.tool_calls.length} herramienta(s)`);
 
-    // Ejecutar cada tool call
+    // Ejecutar cada tool call usando ToolsService
     for (const call of messageResponse.tool_calls) {
       const { function: fnCall, id } = call;
       const { name, arguments: args } = fnCall;
-      
+
       try {
-        console.log(`[${userId}] Ejecutando: ${name}`);
+        console.log(`   ⚙️ [${userId}] Ejecutando: ${name}`);
         const parametros = JSON.parse(args || '{}');
-        
-        const resultado = await this.ejecutarHerramienta(
-          name, 
-          parametros, 
-          userToken, 
-          userInfo, 
-          conversationId
+
+        // ✅ Delegar ejecución a ToolsService
+        const resultado = await toolsService.executeTool(
+          name,
+          parametros,
+          {
+            userToken,
+            userInfo
+          }
         );
-        
+
         resultados.push({
           tool_call_id: id,
           content: typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado)
         });
 
-        console.log(`[${userId}] ${name} ejecutado exitosamente`);
-        
+        console.log(`   ✅ [${userId}] ${name} ejecutado exitosamente`);
+
       } catch (error) {
-        console.error(`[${userId}] Error ejecutando ${name}:`, error.message);
+        console.error(`   ❌ [${userId}] Error ejecutando ${name}:`, error.message);
         resultados.push({
           tool_call_id: id,
           content: `Error ejecutando ${name}: ${error.message}`
@@ -332,10 +311,10 @@ INSTRUCCIONES:
     const finalMessages = [
       ...mensajesPrevios,
       messageResponse,
-      ...resultados.map(r => ({ 
-        role: 'tool', 
-        tool_call_id: r.tool_call_id, 
-        content: r.content 
+      ...resultados.map(r => ({
+        role: 'tool',
+        tool_call_id: r.tool_call_id,
+        content: r.content
       }))
     ];
 
@@ -357,339 +336,15 @@ INSTRUCCIONES:
     };
   }
 
-  // EJECUTAR HERRAMIENTA INDIVIDUAL
-  async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
-    switch (nombre) {
-      case 'obtener_fecha_hora_actual':
-        return this.obtenerFechaHora(parametros.formato || 'completo');
-
-      case 'obtener_informacion_usuario':
-        return this.obtenerInfoUsuario(userInfo);
-
-      case 'consultar_tasas_interes':
-        return await this.consultarTasasInteres(parametros.anio, userToken, userInfo);
-
-      case 'consultar_saldo_usuario':
-        return await this.consultarSaldoUsuario(userToken, userInfo);
-
-      case 'buscar_documentos_nova':
-        return await this.buscarDocumentosNova(parametros.consulta, userInfo);
-
-      default:
-        throw new Error(`Herramienta desconocida: ${nombre}`);
-    }
-  }
-
-  // IMPLEMENTACIÓN DE HERRAMIENTAS
-
-  obtenerFechaHora(formato = 'completo') {
-    const ahora = DateTime.now().setZone('America/Mexico_City');
-    switch (formato) {
-      case 'fecha': 
-        return `Fecha: ${ahora.toFormat('dd/MM/yyyy')}`;
-      case 'hora': 
-        return `Hora: ${ahora.toFormat('HH:mm:ss')}`;
-      default:
-        return `Fecha y hora actual: ${ahora.toFormat('dd/MM/yyyy HH:mm:ss')} (${ahora.zoneName})`;
-    }
-  }
-
-  obtenerInfoUsuario(userInfo) {
-    if (!userInfo) {
-      return 'No hay información de usuario disponible';
-    }
-    
-    let info = 'Información del usuario:\n';
-    if (userInfo.nombre) info += `- Nombre: ${userInfo.nombre}\n`;
-    if (userInfo.usuario) info += `- Usuario/Socio: ${userInfo.usuario}\n`;
-    if (userInfo.paterno) info += `- Apellido paterno: ${userInfo.paterno}\n`;
-    if (userInfo.materno) info += `- Apellido materno: ${userInfo.materno}\n`;
-    
-    const tieneToken = !!(userInfo.token && userInfo.token.length > 50);
-    info += `- Estado: ${tieneToken ? 'Autenticado' : 'Sin autenticar'}`;
-    
-    return info;
-  }
-
-  async consultarTasasInteres(anio, userToken, userInfo) {
-    try {
-      if (!userToken || !userInfo) {
-        return 'Error: Autenticación requerida para consultar tasas de interés';
-      }
-      
-      const cveUsuario = userInfo.usuario;
-      const numRI = this.extractNumRIFromToken(userToken) || '7';
-
-      const requestBody = { 
-        usuarioActual: { CveUsuario: cveUsuario }, 
-        data: { NumRI: numRI, Anio: anio } 
-      };
-      
-      const url = process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
-
-      const response = await axios.post(url, requestBody, {
-        headers: { 
-          'Content-Type': 'application/json', 
-          Authorization: `Bearer ${userToken}`,
-          Accept: 'application/json' 
-        },
-        timeout: 15000
-      });
-
-      if (response.status === 200 && response.data?.info) {
-        return this.formatearTasas(response.data.info, anio);
-      } else {
-        return `Sin datos de tasas para el año ${anio}`;
-      }
-    } catch (error) {
-      console.error(`Error consultando tasas ${anio}:`, error.message);
-      if (error.response?.status === 401) {
-        return 'Error: Token expirado. Inicia sesión nuevamente.';
-      }
-      return `Error consultando tasas: ${error.message}`;
-    }
-  }
-
-  formatearTasas(tasasData, anio) {
-    if (!Array.isArray(tasasData) || !tasasData.length) {
-      return 'No hay datos de tasas disponibles';
-    }
-
-    let respuesta = `Tasas de interés Nova Corporation ${anio}:\n\n`;
-    
-    tasasData.forEach(item => {
-      const mes = (item.Mes || '').toString();
-      respuesta += `${mes}:\n`;
-      if (item.vista) respuesta += `  - Vista: ${item.vista}%\n`;
-      if (item.fijo1) respuesta += `  - Fijo 1M: ${item.fijo1}%\n`;
-      if (item.fijo3) respuesta += `  - Fijo 3M: ${item.fijo3}%\n`;
-      if (item.fijo6) respuesta += `  - Fijo 6M: ${item.fijo6}%\n`;
-      if (item.FAP) respuesta += `  - FAP: ${item.FAP}%\n`;
-      if (item.Nov) respuesta += `  - Nov: ${item.Nov}%\n`;
-      if (item.Prestamos) respuesta += `  - Préstamos: ${item.Prestamos}%\n`;
-      respuesta += '\n';
-    });
-
-    return respuesta;
-  }
-
-  async consultarSaldoUsuario(userToken, userInfo) {
-    try {
-      if (!userToken || !userInfo) {
-        return 'Error: Autenticación requerida para consultar saldo';
-      }
-
-      const cveUsuario = userInfo.usuario;
-      const requestBody = { 
-        usuarioActual: { CveUsuario: cveUsuario }, 
-        data: { NumSocio: cveUsuario, TipoSist: '' } 
-      };
-      
-      const url = process.env.NOVA_API_URL_SALDO || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaSaldo/ObtSaldo';
-
-      const response = await axios.post(url, requestBody, {
-        headers: { 
-          'Content-Type': 'application/json', 
-          Authorization: `Bearer ${userToken}`,
-          Accept: 'application/json' 
-        },
-        timeout: 15000
-      });
-
-      if (response.status === 200 && response.data) {
-        return this.formatearSaldo(response.data, userInfo);
-      }
-      return 'No se pudo obtener información de saldo';
-
-    } catch (error) {
-      console.error('Error consultando saldo:', error.message);
-      if (error.response?.status === 401) {
-        return 'Error: Token expirado. Inicia sesión nuevamente.';
-      }
-      return `Error consultando saldo: ${error.message}`;
-    }
-  }
-
-  formatearSaldo(saldoData, userInfo) {
-    let resultado = `Consulta de saldo para ${userInfo.nombre || userInfo.usuario}:\n\n`;
-
-    let saldos = [];
-    if (Array.isArray(saldoData?.info)) saldos = saldoData.info;
-    else if (Array.isArray(saldoData?.data)) saldos = saldoData.data;
-    else if (Array.isArray(saldoData)) saldos = saldoData;
-
-    if (!saldos.length) {
-      return resultado + 'Sin información de saldo disponible';
-    }
-
-    let totalDisponible = 0;
-    let totalRetenido = 0;
-
-    saldos.forEach((cuenta, index) => {
-      const disp = parseFloat(cuenta.saldoDisponible ?? cuenta.disponible ?? cuenta.SaldoDisponible ?? 0);
-      const ret = parseFloat(cuenta.saldoRetenido ?? cuenta.retenido ?? cuenta.SaldoRetenido ?? 0);
-      const tipo = cuenta.tipoCuenta ?? cuenta.tipo ?? cuenta.TipoCuenta ?? `Cuenta ${index + 1}`;
-      
-      totalDisponible += disp;
-      totalRetenido += ret;
-      
-      resultado += `${tipo}:\n`;
-      resultado += `  - Disponible: $${disp.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      resultado += `  - Retenido: $${ret.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      resultado += `  - Total: $${(disp + ret).toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n\n`;
-    });
-
-    const totalGeneral = totalDisponible + totalRetenido;
-    resultado += `RESUMEN:\n`;
-    resultado += `- Total Disponible: $${totalDisponible.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-    resultado += `- Total Retenido: $${totalRetenido.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-    resultado += `- TOTAL GENERAL: $${totalGeneral.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
-
-    return resultado;
-  }
-
-  async buscarDocumentosNova(consulta, userInfo) {
-    const userId = userInfo?.usuario || 'unknown';
-    
-    try {
-      if (!documentService?.isAvailable?.()) {
-        return 'Servicio de búsqueda de documentos no disponible. Verifica la configuración de Azure Search.';
-      }
-
-      console.log(`[${userId}] Buscando en documentos: "${consulta}"`);
-      const resultado = await documentService.buscarDocumentos(consulta, userId);
-      
-      if (!resultado || typeof resultado !== 'string') {
-        return 'No se encontró información relevante en los documentos.';
-      }
-      
-      if (resultado.length < 50) {
-        return 'No se encontraron documentos relevantes para la consulta.';
-      }
-
-      return resultado;
-
-    } catch (error) {
-      console.error(`[${userId}] Error buscando documentos:`, error.message);
-      return `Error en búsqueda de documentos: ${error.message}`;
-    }
-  }
-
-  // UTILIDADES
-
-  extractNumRIFromToken(token) {
-    try {
-      if (!token) return null;
-      const clean = token.replace(/^Bearer\s+/, '');
-      const parts = clean.split('.');
-      if (parts.length !== 3) return null;
-      
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-      
-      // Buscar NumRI en varios campos posibles
-      const keys = ['NumRI', 'numRI', 'numri', 'sub', 'user_id'];
-      for (const key of keys) {
-        if (payload[key]) {
-          const n = parseInt(payload[key]);
-          if (!isNaN(n) && n > 0) return n;
-        }
-      }
-      return 7; // Default
-    } catch (error) {
-      console.warn('Error extrayendo NumRI del token:', error.message);
-      return 7;
-    }
-  }
-
+  // ========================================
   // INFORMACIÓN DEL SERVICIO
+  // ========================================
 
-  getServiceStats() {
-    return {
-      available: this.openaiAvailable,
-      embeddingAvailable: this.embeddingAvailable,
-      initialized: this.initialized,
-      deployment: this.deploymentName,
-      embeddingDeployment: this.embeddingDeployment,
-      embeddingModel: this.embeddingModel,
-      toolsCount: this.tools?.length || 0,
-      integrations: {
-        documentService: documentService?.isAvailable?.() || false,
-        cosmosService: cosmosService?.isAvailable?.() || false
-      }
-    };
-  }
-
-  isAvailable() { 
-    return this.openaiAvailable && this.initialized; 
-  }
-
-  cleanup() { 
-    console.log('OpenAI Service limpiado'); 
-  }
-
-  /*
-   * MÉTODOS DE COMPATIBILIDAD PARA WEBCHAT
-   * CORREGIDOS: Usa cliente separado para embeddings
+  /**
+   * Verifica si el servicio está disponible
+   * @returns {boolean}
    */
-
-  async createEmbedding({ input, dimensions = 1024 }) {
-    try {
-      if (!this.embeddingAvailable || !this.embeddingClient) {
-        console.error('Servicio de embeddings no disponible');
-        return null;
-      }
-      
-      console.log(`Creando embedding con deployment: ${this.embeddingDeployment}, dimensiones: ${dimensions}`);
-      
-      const params = {
-        model: this.embeddingModel, // Usará el deployment correcto
-        input,
-        dimensions: dimensions
-      };
-      
-      // Usar el cliente específico para embeddings
-      const resp = await this.embeddingClient.embeddings.create(params);
-      return resp?.data?.[0]?.embedding || null;
-    } catch (error) {
-      console.error('Error en createEmbedding:', error.message);
-      // Log adicional para debugging
-      console.error('Embedding deployment:', this.embeddingDeployment);
-      console.error('Embedding model:', this.embeddingModel);
-      return null;
-    }
-  }
-  
-  async completionWithContext({ messages = [], documents = [], temperature = 1.0, contextVars = {} }) {
-    try {
-      if (!this.openaiAvailable) return { text: '' };
-
-      // Construir contexto de documentos
-      const docsText = Array.isArray(documents) && documents.length
-        ? 'Contexto de documentos:\n' + documents
-            .map((d, i) => `(${i + 1}) ${(d.text || d.content || '').substring(0, 1000)}`)
-            .join('\n\n')
-        : '';
-
-      const systemPrompt = `Responde SIEMPRE en español. Variables de contexto: ${JSON.stringify(contextVars)}.` +
-        (docsText ? `\n\n${docsText}` : '');
-      const systemMessage = { role: 'system', content: systemPrompt };
-
-      // Filtrar y preparar mensajes
-      const userMessages = (Array.isArray(messages) ? messages : []).filter(m => m && m.role && m.content);
-      const finalMessages = [systemMessage, ...userMessages];
-
-      const resp = await this.openai.chat.completions.create({
-        model: this.deploymentName,
-        messages: finalMessages,
-        temperature,
-        max_completion_tokens: 800
-      });
-      
-      const text = resp?.choices?.[0]?.message?.content?.trim() || '';
-      return { text };
-    } catch (error) {
-      console.error('Error en completionWithContext:', error.message);
-      return { text: '' };
-    }
+  isAvailable() {
+    return this.openaiAvailable && this.initialized;
   }
 }

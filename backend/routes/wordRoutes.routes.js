@@ -13,6 +13,14 @@ const processedFiles = new Set();
 
 wordRoutes.post('/sendWord', upload.single('wordFile'), async (req, res) => {
     try {
+        // ✅ V4: Verificar que Azure Search esté configurado
+        if (!client) {
+            return res.status(503).json({
+                error: "Azure Search no está configurado",
+                message: "Faltan variables de entorno: AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_API_KEY, AZURE_SEARCH_INDEX_NAME"
+            });
+        }
+
         if (!req.file) {
             return res.status(400).json({ error: "Se requiere un archivo Word" });
         }

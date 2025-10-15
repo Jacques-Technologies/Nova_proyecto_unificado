@@ -11,12 +11,10 @@ import {
 
 import TeamsBot from './bots/teamsBot.js';
 import CosmosService from './services/cosmosService.js';
-import ConversationService from './services/conversationService.js';
 import AzureOpenAIService from './services/openaiService.js';
 
 // Inicialización de servicios
 const cosmosService = new CosmosService();
-const conversationService = new ConversationService();
 const openaiService = new AzureOpenAIService();
 
 // ✅ CONFIGURACIÓN MULTI-BOT
@@ -104,7 +102,7 @@ async function startServer() {
   const { pdfRoutes } = await import('./backend/routes/pdf.routes.js');
   const { wordRoutes } = await import('./backend/routes/wordRoutes.routes.js');
   
-  // Rutas de chat web (init, ask, history, stream)
+  // Rutas de chat web (init, ask, history, clear, status)
   const { default: webchatRoute } = await import('./routes/webchatRoute.js');
   
   const app = express();
@@ -250,10 +248,11 @@ app.get('/', (req, res) => {
         'POST /api/sendWord'
       ],
       webchat: [
-        'POST /api/webchat/init',
+        'GET/POST /api/webchat/init',
         'POST /api/webchat/ask',
         'GET /api/webchat/history',
-        'GET /api/webchat/stream'
+        'POST /api/webchat/clear',
+        'GET /api/webchat/status'
       ],
       info: [
         'GET /api/bots',
@@ -334,10 +333,11 @@ app.get('/welcome', (req, res) => {
     console.log(`   • POST http://localhost:${PORT}/api/sendWord`);
     
     console.log(`\n💬 ENDPOINTS DE WEBCHAT:`);
-    console.log(`   • POST http://localhost:${PORT}/api/webchat/init`);
-    console.log(`   • POST http://localhost:${PORT}/api/webchat/ask`);
-    console.log(`   • GET  http://localhost:${PORT}/api/webchat/history`);
-    console.log(`   • GET  http://localhost:${PORT}/api/webchat/stream`);
+    console.log(`   • GET/POST http://localhost:${PORT}/api/webchat/init`);
+    console.log(`   • POST    http://localhost:${PORT}/api/webchat/ask`);
+    console.log(`   • GET     http://localhost:${PORT}/api/webchat/history`);
+    console.log(`   • POST    http://localhost:${PORT}/api/webchat/clear`);
+    console.log(`   • GET     http://localhost:${PORT}/api/webchat/status`);
     
     console.log(`\n🔍 ENDPOINTS DE INFORMACIÓN:`);
     console.log(`   • GET  http://localhost:${PORT}/api/bots (info de todos los bots)`);

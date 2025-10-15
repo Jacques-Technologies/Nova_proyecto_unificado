@@ -1,33 +1,29 @@
-// src/routes/webchatRoute.js - RUTAS ACTUALIZADAS
+// routes/webchatRoute.js - v3.0 SIMPLIFICADO
+// Solo rutas con implementación en webchatController.js
 import express from 'express';
 import * as webchatController from '../controllers/webchatController.js';
 
 const router = express.Router();
 
-// Rutas WebChat principales
+// ============================================================
+// RUTAS PRINCIPALES - WebChat API v3.0
+// ============================================================
+
+// Inicializar chat (devuelve mensaje de bienvenida)
 router.get('/init', webchatController.init);
 router.post('/init', webchatController.init);
 
+// Procesar mensaje del usuario
 router.post('/ask', webchatController.ask);
+
+// Obtener historial de mensajes
 router.get('/history', webchatController.history);
 
-router.get('/stream', webchatController.stream);
-router.post('/stream', webchatController.stream);
-
-router.get('/status', webchatController.status);
+// Limpiar historial
 router.post('/clear', webchatController.clear);
+router.delete('/clear', webchatController.clear);
 
-router.get('/conversations', webchatController.conversations);
-router.patch('/conversation/:id', webchatController.renameConversation);
-
-// Utilidades
-router.get('/summary', webchatController.summary);
-
-router.get('/verify-historial', webchatController.verifyHistorial);
-
-// 🔍 Endpoints de debug (ordenados por nivel de detalle)
-router.get('/debug', webchatController.debugToken);           // Debug básico
-router.get('/deep-debug', webchatController.deepDebug);       // Debug intermedio  
-router.get('/debug-complete', webchatController.debugComplete); // ✅ NUEVO: Debug completo con test de continuidad
+// Estado de los servicios
+router.get('/status', webchatController.status);
 
 export default router;
