@@ -519,6 +519,70 @@ Bot responde: "Para realizar simulaciones, usa el simulador del portal web..."
 - ✅ Experiencia de usuario profesional
 - ✅ Auditoría completa en portal web
 
+### Sistema de Clarificación de Intenciones
+
+**Problema:** El bot ejecutaba herramientas con mensajes ambiguos, causando:
+- ❌ Respuestas incorrectas o irrelevantes
+- ❌ Uso innecesario de herramientas/APIs
+- ❌ Frustración del usuario por falta de contexto
+
+**Solución v4.0:**
+
+**Detección inteligente de ambigüedad:**
+```javascript
+// En openaiService.js - prepararMensajes()
+IMPORTANTE - CLARIFICACIÓN DE INTENCIONES:
+• Si el usuario escribe palabras técnicas sueltas SIN contexto claro, NO asumas su intención
+• Palabras técnicas ambiguas: "tasas", "saldo", "documentos", "información", "cuenta"
+• EXCEPCIÓN: Saludos y cortesía son naturales → responde normalmente
+• Cuando detectes ambigüedad TÉCNICA, pregunta para clarificar
+• Solo ejecuta herramientas cuando la intención sea CLARA
+```
+
+**Diferenciación clave:**
+
+| Tipo de mensaje | Ejemplo | Respuesta del bot |
+|-----------------|---------|-------------------|
+| **Saludo/Cortesía** ✅ | "hola", "gracias", "ok", "buenos días" | Responde normalmente (natural) |
+| **Técnico CLARO** ✅ | "consulta mi saldo", "tasas del 2025" | Ejecuta herramienta correspondiente |
+| **Técnico AMBIGUO** ❌ | "tasas", "saldo", "documentos" | Pregunta para clarificar |
+
+**Ejemplos de clarificación:**
+
+```
+Usuario: "tasas"
+Bot: "¿Te refieres a las tasas de interés? ¿De qué año te gustaría consultarlas?"
+
+Usuario: "saldo"
+Bot: "¿Quieres consultar tu saldo actual de cuentas?"
+
+Usuario: "documentos"
+Bot: "¿Qué tipo de documentos buscas? ¿Sobre qué tema específico?"
+```
+
+**Flujo con clarificación:**
+```
+Usuario: "tasas"
+    ↓
+OpenAI detecta: palabra técnica sin contexto
+    ↓
+Bot pregunta: "¿Te refieres a las tasas de interés? ¿De qué año?"
+    ↓
+Usuario: "del 2025"
+    ↓
+OpenAI detecta: intención clara ahora
+    ↓
+Ejecuta: consultar_tasas_interes(2025)
+    ↓
+✅ Respuesta precisa y relevante
+```
+
+**Beneficios:**
+- ✅ Evita respuestas incorrectas
+- ✅ Mejor experiencia conversacional
+- ✅ Uso eficiente de herramientas
+- ✅ Usuario se siente comprendido
+
 ---
 
 ## 🛠️ Patterns y Convenciones
