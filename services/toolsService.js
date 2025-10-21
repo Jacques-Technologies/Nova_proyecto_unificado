@@ -1,13 +1,12 @@
 // services/toolsService.js - Servicio separado para herramientas de OpenAI
 import 'dotenv/config';
-import { DateTime } from 'luxon';
 import axios from 'axios';
 import DocumentService from './documentService.js';
 
 const documentService = new DocumentService();
 
 /**
- * ToolsService - Gestiona las 5 herramientas disponibles para el bot
+ * ToolsService - Gestiona las 4 herramientas disponibles para el bot
  *
  * Responsabilidades:
  * 1. Definir schemas de herramientas para OpenAI
@@ -16,7 +15,6 @@ const documentService = new DocumentService();
  * 4. Manejo de errores específicos
  *
  * Herramientas disponibles:
- * - obtener_fecha_hora_actual: Fecha/hora en zona México
  * - obtener_informacion_usuario: Info del perfil del usuario
  * - consultar_tasas_interes: Tasas de interés Nova Corporation
  * - consultar_saldo_usuario: Saldos de cuentas del usuario
@@ -25,12 +23,12 @@ const documentService = new DocumentService();
 export default class ToolsService {
   constructor() {
     this.available = true;
-    console.log('✅ ToolsService inicializado con 5 herramientas');
+    console.log('✅ ToolsService inicializado con 4 herramientas');
   }
 
   /**
    * Obtiene definiciones de herramientas en formato OpenAI
-   * @returns {Array} Array de 5 tool definitions
+   * @returns {Array} Array de 4 tool definitions
    */
   getToolDefinitions() {
     return [
@@ -125,9 +123,6 @@ export default class ToolsService {
     const { userToken, userInfo } = context;
 
     switch (toolName) {
-      case 'obtener_fecha_hora_actual':
-        return this.obtenerFechaHora(params.formato || 'completo');
-
       case 'obtener_informacion_usuario':
         return this.obtenerInfoUsuario(userInfo);
 
@@ -138,7 +133,7 @@ export default class ToolsService {
         return await this.consultarSaldoUsuario(userToken, userInfo);
 
       case 'buscar_documentos_nova':
-        return await this.buscarDocumentosNova(params.consulta, userInfo);
+        return await this.buscarDocumentosNova(params.consulta, userInfo, userToken);
 
       default:
         throw new Error(`Herramienta desconocida: ${toolName}`);
@@ -150,25 +145,7 @@ export default class ToolsService {
   // ========================================
 
   /**
-   * Tool 1: Obtener fecha y hora actual
-   * @param {string} formato - 'completo', 'fecha', 'hora'
-   * @returns {string} Fecha/hora formateada
-   */
-  obtenerFechaHora(formato = 'completo') {
-    const ahora = DateTime.now().setZone('America/Mexico_City');
-
-    switch (formato) {
-      case 'fecha':
-        return `Fecha: ${ahora.toFormat('dd/MM/yyyy')}`;
-      case 'hora':
-        return `Hora: ${ahora.toFormat('HH:mm:ss')}`;
-      default:
-        return `Fecha y hora actual: ${ahora.toFormat('dd/MM/yyyy HH:mm:ss')} (${ahora.zoneName})`;
-    }
-  }
-
-  /**
-   * Tool 2: Obtener información del usuario
+   * Tool 1: Obtener información del usuario
    * @param {Object} userInfo - Información del usuario
    * @returns {string} Info formateada
    */
@@ -190,7 +167,7 @@ export default class ToolsService {
   }
 
   /**
-   * Tool 3: Consultar tasas de interés
+   * Tool 2: Consultar tasas de interés
    * @param {number} anio - Año a consultar (2020-2030)
    * @param {string} userToken - Token JWT
    * @param {Object} userInfo - Info del usuario
@@ -226,13 +203,14 @@ export default class ToolsService {
   }
 
   /**
-   * Tool 4: Consultar saldo del usuario
+   * Tool 3: Consultar saldo del usuario
    * @param {string} userToken - Token JWT
    * @param {Object} userInfo - Info del usuario
    * @returns {Promise<string>} Saldo formateado
    */
   async consultarSaldoUsuario(userToken, userInfo) {
     if (!userToken || !userInfo) {
+      console.log('⚠️ [consultarSaldo] Sin autenticación');
       return 'Error: Autenticación requerida para consultar saldo';
     }
 
@@ -242,29 +220,48 @@ export default class ToolsService {
       data: { NumSocio: cveUsuario, TipoSist: '' }
     };
 
+    console.log(`🔍 [consultarSaldo] Request para usuario: ${cveUsuario}`);
+
     const url = process.env.NOVA_API_URL_SALDO ||
       'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaSaldo/ObtSaldo';
 
     const result = await this._callNovaAPI(url, requestBody, userToken, 'consultar saldo');
 
+    console.log(`📦 [consultarSaldo] API Response:`, {
+      success: result.success,
+      hasData: !!result.data,
+      dataType: typeof result.data,
+      dataKeys: result.data ? Object.keys(result.data) : [],
+      status: result.status,
+      error: result.error
+    });
+
     if (!result.success) {
+      console.log(`❌ [consultarSaldo] Error de API: ${result.error}`);
       return `Error: ${result.error}`;
     }
 
     if (result.data) {
-      return this.formatearSaldo(result.data, userInfo);
+      // Log de estructura de datos antes de formatear
+      console.log(`🔧 [consultarSaldo] Datos recibidos:`, JSON.stringify(result.data, null, 2).substring(0, 500));
+
+      const formatted = this.formatearSaldo(result.data, userInfo);
+      console.log(`✅ [consultarSaldo] Respuesta formateada (${formatted.length} chars):`, formatted.substring(0, 200));
+      return formatted;
     }
 
+    console.log(`⚠️ [consultarSaldo] Sin datos en respuesta`);
     return 'No se pudo obtener información de saldo';
   }
 
   /**
-   * Tool 5: Buscar en documentos Nova (Azure Search)
+   * Tool 4: Buscar en documentos Nova (Azure Search)
    * @param {string} consulta - Término de búsqueda
    * @param {Object} userInfo - Info del usuario
+   * @param {string} userToken - Token JWT del usuario
    * @returns {Promise<string>} Resultados de búsqueda
    */
-  async buscarDocumentosNova(consulta, userInfo) {
+  async buscarDocumentosNova(consulta, userInfo, userToken) {
     const userId = userInfo?.usuario || 'unknown';
 
     try {
@@ -273,7 +270,13 @@ export default class ToolsService {
       }
 
       console.log(`[${userId}] Buscando en documentos: "${consulta}"`);
-      const resultado = await documentService.buscarDocumentos(consulta, userId);
+
+      // Pasar perfil si existe (WebChat), token y numSocio (Teams)
+      const resultado = await documentService.buscarDocumentos(consulta, userId, {
+        perfil: userInfo?.perfil || null,  // ← WebChat pasa perfil explícito
+        userToken: userToken,               // ← Token para Teams
+        numSocio: userInfo?.usuario         // ← NumSocio para Teams
+      });
 
       if (!resultado || typeof resultado !== 'string') {
         return 'No se encontró información relevante en los documentos.';
@@ -340,7 +343,11 @@ export default class ToolsService {
     else if (Array.isArray(saldoData)) saldos = saldoData;
 
     if (!saldos.length) {
-      return resultado + 'Sin información de saldo disponible';
+      return resultado + 'No se encontraron cuentas asociadas a este usuario. ' +
+        'Es posible que:\n' +
+        '- El usuario no tenga cuentas activas\n' +
+        '- Las cuentas no estén asociadas correctamente en el sistema\n' +
+        '- Se necesite verificar la configuración con el administrador';
     }
 
     let totalDisponible = 0;
@@ -384,6 +391,8 @@ export default class ToolsService {
    */
   async _callNovaAPI(url, body, userToken, errorContext = 'API Nova') {
     try {
+      console.log(`🌐 [${errorContext}] Llamando a API Nova...`);
+
       const response = await axios.post(url, body, {
         headers: {
           'Content-Type': 'application/json',
@@ -393,9 +402,18 @@ export default class ToolsService {
         timeout: 15000
       });
 
+      console.log(`✅ [${errorContext}] API Response: Status ${response.status}`);
+      console.log(`📊 [${errorContext}] Response data type: ${typeof response.data}, keys:`,
+        response.data && typeof response.data === 'object' ? Object.keys(response.data) : 'N/A');
+
       return { success: true, data: response.data, status: response.status };
     } catch (error) {
       console.error(`❌ Error en ${errorContext}:`, error.message);
+
+      if (error.response) {
+        console.error(`   Status: ${error.response.status}`);
+        console.error(`   Data:`, error.response.data);
+      }
 
       if (error.response?.status === 401) {
         return { success: false, error: 'Token expirado. Inicia sesión nuevamente.' };

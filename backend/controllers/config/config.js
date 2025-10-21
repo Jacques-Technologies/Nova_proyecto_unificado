@@ -56,6 +56,7 @@ export const config = {
   // consumidores podrán manejar el error apropiadamente.
   AZURE_OPENAI_ENDPOINT: process.env.OPENAI_ENDPOINT,
   AZURE_OPENAI_KEY: process.env.OPENAI_API_KEY,
+  AZURE_OPENAI_API_KEY: process.env.OPENAI_API_KEY,  // Alias requerido por openAI.config.js
   AZURE_OPENAI_DEPLOYMENT: 'text-embedding-3-large',
   AZURE_OPENAI_MODEL: 'text-embedding-3-large',
   AZURE_OPENAI_API_VERSION: '2024-12-01-preview',

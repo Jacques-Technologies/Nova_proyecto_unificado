@@ -193,20 +193,22 @@ export default class AzureOpenAIService {
       ? `Usuario: ${userInfo.nombre} (${userInfo.usuario})`
       : 'Usuario no identificado';
 
-    const systemContent = `Eres Nova-AI, asistente especializado de Nova Corporation.
+    const systemContent = `Tu nombre es Nova-AI, y eres un Asistente virtual inteligente para la institución financiera Nova.
 
 CONTEXTO:
 • ${userContext}
 • Fecha/Hora: ${fechaActual.toFormat('dd/MM/yyyy HH:mm:ss')} (${fechaActual.zoneName})
 
+Responde únicamente en español. Si te dan las gracias, responde que es un gusto ayudar y si hay algo más en lo que puedas asistirlos. Utiliza el historial de la conversación como referencia. Utiliza sólo la información de referencia brindada. No respondas nada fuera de los documentos de referencia. No respondas preguntas que no sean de Nova y sus servicios financieros. Si no conoces la respuesta menciona que no cuentas con esa información. Utiliza de manera preferente la información de referencia con más exactitud y apego a la pregunta. Responde de manera muy concreta y puntual, busca hacer listados y presentar la información de una manera útil y accesible.
+Utiliza únicamente esta información de referencia para contestar las preguntas del usuario. Se concreto en tus respuestas y amable, busca contestar en pocas palabras. Cada extracto es independiente del anterior y no tienen relación.
 INSTRUCCIONES:
-• Responde SIEMPRE en español
 • Sé profesional, preciso y útil
-• Para información técnica de APIs/documentación, usa la herramienta buscar_documentos_nova
+• Para información de referencia de todo tipo, usa la herramienta buscar_documentos_nova
 • Para consultas de saldo, usa consultar_saldo_usuario
 • Para tasas de interés, usa consultar_tasas_interes
 • Si no tienes información específica, indícalo claramente
-• NO inventes información que no esté en los documentos`;
+• NO inventes información que no esté en los documentos
+• Siempre que sean consultas de información usa la herramienta de buscar_documentos_nova`;
 
     messages.push({ role: 'system', content: systemContent });
 
@@ -215,7 +217,7 @@ INSTRUCCIONES:
     // Para WebChat: userId = token JWT completo
     if (cosmosService?.isAvailable?.() && userId) {
       try {
-        const mensajesCosmos = await cosmosService.getLastMessages(userId, 20);
+        const mensajesCosmos = await cosmosService.getLastMessages(userId, 10);
 
         if (mensajesCosmos && mensajesCosmos.length > 0) {
           // Convertir a formato OpenAI
@@ -291,12 +293,15 @@ INSTRUCCIONES:
           }
         );
 
+        const resultadoString = typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado);
+
         resultados.push({
           tool_call_id: id,
-          content: typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado)
+          content: resultadoString
         });
 
         console.log(`   ✅ [${userId}] ${name} ejecutado exitosamente`);
+        console.log(`   📤 [${userId}] Resultado enviado a OpenAI (${resultadoString.length} chars):`, resultadoString.substring(0, 300));
 
       } catch (error) {
         console.error(`   ❌ [${userId}] Error ejecutando ${name}:`, error.message);
@@ -326,9 +331,12 @@ INSTRUCCIONES:
       max_completion_tokens: 3500
     });
 
+    const finalContent = finalResponse.choices?.[0]?.message?.content || 'No se pudo generar respuesta final';
+    console.log(`🤖 [${userId}] Respuesta final de OpenAI (${finalContent.length} chars):`, finalContent.substring(0, 200));
+
     return {
       type: 'text',
-      content: finalResponse.choices?.[0]?.message?.content || 'No se pudo generar respuesta final',
+      content: finalContent,
       metadata: {
         toolsUsed: messageResponse.tool_calls.map(tc => tc.function.name),
         usage: finalResponse.usage

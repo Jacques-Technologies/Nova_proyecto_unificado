@@ -80,11 +80,11 @@ export default class CosmosServiceV3 {
 
             const userDoc = {
                 id: `user_${usuario}`,
-                user_id: usuario,  // PARTITION KEY
+                user_id: usuario,  // PARTITION KEY (Teams: "29:xxx", WebChat: token)
                 type: 'user',
 
                 // Datos de autenticación
-                usuario: usuario,
+                usuario: userInfo.usuario || usuario,  // Número de socio real (del API Nova)
                 nombre: userInfo.nombre,
                 paterno: userInfo.paterno || '',
                 materno: userInfo.materno || '',
@@ -158,6 +158,7 @@ export default class CosmosServiceV3 {
                 .read();
 
             // Actualizar datos
+            user.usuario = userInfo.usuario || user.usuario;  // Actualizar número de socio si viene
             user.nombre = userInfo.nombre;
             user.paterno = userInfo.paterno || '';
             user.materno = userInfo.materno || '';

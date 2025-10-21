@@ -1,50 +1,54 @@
-// services/documentService.js - VERSIÓN CON FILTRO DE PERFIL PARA WEB
+// services/documentService.js - V4.0 CLEAN (VECTORIAL ONLY)
 import 'dotenv/config';
 import { SearchClient, AzureKeyCredential } from '@azure/search-documents';
 import OpenAI from 'openai';
+import axios from 'axios';
 
+/**
+ * DocumentService - Búsqueda vectorial semántica en Azure Cognitive Search
+ *
+ * API Pública:
+ * - buscarDocumentos(consulta, userId, options) - Búsqueda vectorial con filtro de perfil
+ * - isAvailable() - Estado del servicio
+ */
 export default class DocumentService {
     constructor() {
         if (DocumentService.instance) {
             return DocumentService.instance;
         }
-        
+
         this.searchAvailable = false;
         this.openaiAvailable = false;
         this.initializationError = null;
-        
-        console.log('Inicializando Document Service...');
+
+        this.initializeServices();
+        DocumentService.instance = this;
+
+        console.log(`📄 DocumentService: Search=${this.searchAvailable}, OpenAI=${this.openaiAvailable}`);
+    }
+
+    initializeServices() {
         this.initializeAzureSearch();
         this.initializeOpenAI();
-        
-        DocumentService.instance = this;
-        console.log(`Document Service - Search: ${this.searchAvailable}, OpenAI: ${this.openaiAvailable}`);
     }
 
     initializeAzureSearch() {
         try {
             const endpoint = process.env.AZURE_SEARCH_ENDPOINT;
             const apiKey = process.env.AZURE_SEARCH_API_KEY;
-            const indexName = process.env.AZURE_SEARCH_INDEX_NAME
+            const indexName = process.env.AZURE_SEARCH_INDEX_NAME;
 
             if (!endpoint || !apiKey) {
-                throw new Error('Variables AZURE_SEARCH_ENDPOINT y AZURE_SEARCH_API_KEY requeridas');
+                throw new Error('AZURE_SEARCH_ENDPOINT y AZURE_SEARCH_API_KEY requeridas');
             }
 
-            this.searchClient = new SearchClient(
-                endpoint,
-                indexName,
-                new AzureKeyCredential(apiKey)
-            );
-            
+            this.searchClient = new SearchClient(endpoint, indexName, new AzureKeyCredential(apiKey));
             this.indexName = indexName;
             this.vectorField = 'Embedding';
             this.searchAvailable = true;
-            
-            console.log('Azure Search configurado correctamente');
-            
+
         } catch (error) {
-            console.error('Error inicializando Azure Search:', error.message);
+            console.error('❌ Azure Search:', error.message);
             this.searchAvailable = false;
             this.initializationError = error.message;
         }
@@ -54,376 +58,243 @@ export default class DocumentService {
         try {
             const endpoint = process.env.OPENAI_ENDPOINT;
             const apiKey = process.env.OPENAI_API_KEY;
-            
+
             if (!endpoint || !apiKey) {
-                console.log('OpenAI no configurado - usando solo búsqueda textual');
+                console.log('⚠️ OpenAI no configurado - solo búsqueda textual');
                 return;
             }
 
             const embeddingDeployment = 'text-embedding-3-large';
             const baseURL = `${endpoint}/openai/deployments/${embeddingDeployment}`;
-            
+
             this.openaiClient = new OpenAI({
                 apiKey: apiKey,
                 baseURL: baseURL,
                 defaultQuery: { 'api-version': '2025-01-01-preview' },
-                defaultHeaders: {
-                    'api-key': apiKey,
-                    'Content-Type': 'application/json'
-                },
+                defaultHeaders: { 'api-key': apiKey, 'Content-Type': 'application/json' },
                 timeout: 30000
             });
 
             this.embeddingModel = embeddingDeployment;
             this.openaiAvailable = true;
-            
-            console.log('Azure OpenAI para embeddings configurado');
 
         } catch (error) {
-            console.error('Error inicializando Azure OpenAI:', error.message);
+            console.error('❌ OpenAI embeddings:', error.message);
             this.openaiAvailable = false;
         }
     }
 
-    // MÉTODO PRINCIPAL - AHORA ACEPTA PERFIL
+    // ========================================
+    // API PÚBLICA
+    // ========================================
+
+    /**
+     * Busca documentos con filtro opcional de perfil (solo vectorial)
+     * @param {string} consulta - Términos de búsqueda
+     * @param {string} userId - ID del usuario (para logs)
+     * @param {Object} options - { perfil?, userToken?, numSocio? }
+     * @returns {Promise<string>} Resultados formateados o error
+     */
     async buscarDocumentos(consulta, userId = 'unknown', options = {}) {
-        const { perfil = null } = options;
-        console.log(`[${userId}] Buscando: "${consulta}", Perfil: ${perfil || 'sin filtro'}`);
-        
+        let { perfil = null, userToken = null, numSocio = null } = options;
+
+        // Si NO viene perfil pero SÍ token y numSocio → obtener del API
+        if (!perfil && userToken && numSocio) {
+            try {
+                perfil = await this.obtenerPerfilDesdeAPI(userToken, numSocio);
+                console.log(`🔑 [${userId}] Perfil obtenido del API: ${perfil}`);
+            } catch (error) {
+                console.warn(`⚠️ [${userId}] No se pudo obtener perfil del API: ${error.message}`);
+                perfil = '0';  // Default: perfil "0" si no se pudo obtener
+                console.log(`🔑 [${userId}] Usando perfil default: ${perfil}`);
+            }
+        }
+
+        // Si aún no hay perfil (ej: WebChat sin perfil explícito), usar "0"
+        if (!perfil) {
+            perfil = '0';
+            console.log(`🔑 [${userId}] Sin perfil especificado, usando default: ${perfil}`);
+        }
+
+        // Validar que la consulta no esté vacía
+        const consultaLimpia = (consulta || '').trim();
+        if (!consultaLimpia) {
+            consulta = 'consultar documentos disponibles';
+            console.log(`⚠️ [${userId}] Consulta vacía, usando default: "${consulta}"`);
+        }
+
+        console.log(`🔍 [${userId}] "${consulta}" | Perfil: ${perfil}`);
+
         if (!this.searchAvailable) {
-            return `Error: Servicio de búsqueda no disponible. ${this.initializationError || ''}`;
+            return `Error: Azure Search no disponible. ${this.initializationError || ''}`;
+        }
+
+        if (!this.openaiAvailable) {
+            return 'Error: OpenAI no disponible para búsqueda vectorial. Verifica la configuración.';
         }
 
         try {
-            // Primero intentar búsqueda vectorial si OpenAI está disponible
-            if (this.openaiAvailable) {
-                const resultadoVectorial = await this.busquedaVectorial(consulta, userId, { perfil, ...options });
-                if (resultadoVectorial && resultadoVectorial.length > 100) {
-                    return resultadoVectorial;
-                }
-            }
-
-            // Fallback a búsqueda textual con filtro de perfil
-            return await this.busquedaTextual(consulta, userId, { perfil, ...options });
-
+            return await this.busquedaVectorial(consulta, userId, perfil);
         } catch (error) {
-            console.error(`[${userId}] Error en búsqueda:`, error.message);
-            return `Error en búsqueda de documentos: ${error.message}`;
+            console.error(`❌ [${userId}] Error:`, error.message);
+            return `Error en búsqueda vectorial: ${error.message}`;
         }
-    }
-
-    // BÚSQUEDA VECTORIAL CON FILTRO DE PERFIL
-    async busquedaVectorial(consulta, userId, options) {
-        try {
-            const { perfil } = options;
-            console.log(`[${userId}] Ejecutando búsqueda vectorial con perfil: ${perfil || 'sin filtro'}...`);
-            
-            // Generar embedding
-            const embedding = await this.createEmbedding(consulta);
-            if (!embedding) {
-                console.log(`[${userId}] No se pudo generar embedding`);
-                return null;
-            }
-
-            // Construir configuración de búsqueda según la especificación
-            const searchOptions = {
-                count: true,
-                select: ['Chunk', 'archivoid', 'Folder', 'FileName', 'uniqueid', 'Perfil'],
-                vectorFilterMode: 'postFilter',
-                vectorQueries: [{
-                    vector: embedding,
-                    k: 15,
-                    fields: this.vectorField,
-                    kind: 'vector',
-                    exhaustive: true
-                }],
-                top: 15
-            };
-
-            // Agregar filtro de perfil si se especifica
-            if (perfil) {
-                searchOptions.filter = `search.in(Perfil, '${perfil}', '|')`;
-                console.log(`[${userId}] Aplicando filtro de perfil: ${searchOptions.filter}`);
-            }
-
-            // Buscar en Azure Search
-            const searchResults = await this.searchClient.search("*", searchOptions);
-
-            // Procesar resultados
-            const documentos = [];
-            let totalCount = 0;
-
-            for await (const result of searchResults.results) {
-                totalCount++;
-                const doc = result.document || {};
-                const score = result.score || 0;
-                const chunk = (doc.Chunk || '').trim();
-                
-                // Filtros básicos de calidad
-                if (!chunk || chunk.length < 50 || score < 0.3) {
-                    console.log(`[${userId}] Documento filtrado por calidad - Score: ${score}, Length: ${chunk.length}`);
-                    continue;
-                }
-                
-                documentos.push({
-                    fileName: doc.FileName || 'Sin nombre',
-                    folder: doc.Folder || '',
-                    archivoid: doc.archivoid || '',
-                    uniqueid: doc.uniqueid || '',
-                    perfil: doc.Perfil || '',
-                    chunk: chunk,
-                    score: score
-                });
-                
-                if (documentos.length >= 10) break;
-            }
-
-            console.log(`[${userId}] Búsqueda vectorial completada - Total encontrados: ${totalCount}, Válidos: ${documentos.length}`);
-
-            if (documentos.length === 0) {
-                console.log(`[${userId}] Sin resultados válidos en búsqueda vectorial`);
-                return null;
-            }
-
-            return this.formatearResultados(consulta, documentos, 'vectorial', perfil);
-
-        } catch (error) {
-            console.error(`[${userId}] Error en búsqueda vectorial:`, error.message);
-            return null;
-        }
-    }
-
-    // BÚSQUEDA TEXTUAL CON FILTRO DE PERFIL
-    async busquedaTextual(consulta, userId, options) {
-        try {
-            const { perfil } = options;
-            console.log(`[${userId}] Ejecutando búsqueda textual con perfil: ${perfil || 'sin filtro'}...`);
-            
-            const queryLimpia = this.limpiarQuery(consulta);
-            
-            const searchOptions = {
-                select: ['Chunk', 'archivoid', 'Folder', 'FileName', 'uniqueid', 'Perfil'],
-                top: 15,
-                searchMode: 'all',
-                queryType: 'full',
-                searchFields: ['Chunk', 'FileName', 'Folder'],
-                count: true
-            };
-
-            // Agregar filtro de perfil si se especifica
-            if (perfil) {
-                searchOptions.filter = `search.in(Perfil, '${perfil}', '|')`;
-                console.log(`[${userId}] Aplicando filtro textual de perfil: ${searchOptions.filter}`);
-            }
-
-            const searchResults = await this.searchClient.search(queryLimpia, searchOptions);
-
-            const documentos = [];
-            let totalCount = 0;
-
-            for await (const result of searchResults.results) {
-                totalCount++;
-                const doc = result.document || {};
-                const chunk = (doc.Chunk || '').trim();
-                
-                // Filtros básicos
-                if (!chunk || chunk.length < 50) {
-                    console.log(`[${userId}] Documento filtrado en búsqueda textual - Length: ${chunk.length}`);
-                    continue;
-                }
-                
-                documentos.push({
-                    fileName: doc.FileName || 'Sin nombre',
-                    folder: doc.Folder || '',
-                    archivoid: doc.archivoid || '',
-                    uniqueid: doc.uniqueid || '',
-                    perfil: doc.Perfil || '',
-                    chunk: chunk,
-                    score: result.score || 0
-                });
-                
-                if (documentos.length >= 10) break;
-            }
-
-            console.log(`[${userId}] Búsqueda textual completada - Total encontrados: ${totalCount}, Válidos: ${documentos.length}`);
-
-            if (documentos.length === 0) {
-                return `No se encontraron documentos relevantes para: "${consulta}"${perfil ? ` (perfil: ${perfil})` : ''}`;
-            }
-
-            return this.formatearResultados(consulta, documentos, 'textual', perfil);
-
-        } catch (error) {
-            console.error(`[${userId}] Error en búsqueda textual:`, error.message);
-            throw error;
-        }
-    }
-
-    // FORMATEAR RESULTADOS CON INFORMACIÓN DE PERFIL
-    formatearResultados(consulta, documentos, tipoBusqueda, perfil = null) {
-        let resultado = `Información encontrada sobre: "${consulta}"`;
-        if (perfil) {
-            resultado += ` (perfil: ${perfil})`;
-        }
-        resultado += `\n\n`;
-        
-        // Mostrar solo el contenido real de los documentos encontrados
-        documentos.forEach((doc, index) => {
-            resultado += `**Documento ${index + 1}: ${doc.fileName}**\n`;
-            if (doc.folder) resultado += `*Carpeta: ${doc.folder}*\n`;
-            if (doc.perfil) resultado += `*Perfil: ${doc.perfil}*\n`;
-            resultado += `${doc.chunk}\n\n`;
-            resultado += `---\n\n`;
-        });
-
-        // Información de la búsqueda al final
-        resultado += `*Fuentes: ${documentos.length} documento(s) encontrado(s)*\n`;
-        resultado += `*Tipo de búsqueda: ${tipoBusqueda}*`;
-        if (perfil) {
-            resultado += `\n*Filtrado por perfil: ${perfil}*`;
-        }
-        
-        return resultado;
-    }
-
-    // CREAR EMBEDDING
-    async createEmbedding(text) {
-        if (!this.openaiAvailable || !text) {
-            return null;
-        }
-
-        try {
-            const cleanText = text.trim().substring(0, 8000);
-            
-            const result = await this.openaiClient.embeddings.create({
-                input: cleanText,
-                model: this.embeddingModel
-            });
-            
-            return result.data[0]?.embedding || null;
-                
-        } catch (error) {
-            console.error('Error creando embedding:', error.message);
-            return null;
-        }
-    }
-
-    // LIMPIAR QUERY
-    limpiarQuery(query) {
-        if (!query || typeof query !== 'string') {
-            return '*';
-        }
-
-        let sanitized = query
-            .replace(/[+\-&|!(){}[\]^"~*?:\\]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-        if (!sanitized) return '*';
-
-        const words = sanitized.split(' ').filter(word => word.length > 1);
-        return words.length > 0 ? words.join(' ') : '*';
-    }
-
-    // MÉTODOS DE ESTADO Y UTILIDADES
-
-    getConfigInfo() {
-        return {
-            searchAvailable: this.searchAvailable,
-            openaiAvailable: this.openaiAvailable,
-            indexName: this.indexName || 'No configurado',
-            vectorField: this.vectorField || 'No configurado',
-            embeddingModel: this.embeddingModel || 'No configurado',
-            error: this.initializationError,
-            supportsProfileFilter: true
-        };
     }
 
     isAvailable() {
         return this.searchAvailable;
     }
 
-    async testConnection() {
-        if (!this.searchAvailable) {
-            return false;
+    // ========================================
+    // BÚSQUEDA VECTORIAL
+    // ========================================
+
+    async busquedaVectorial(consulta, userId, perfil) {
+        // Generar embedding de la consulta
+        const embedding = await this.createEmbedding(consulta);
+        if (!embedding) {
+            throw new Error('No se pudo generar embedding de la consulta');
         }
 
-        try {
-            const results = await this.searchClient.search("test", {
-                top: 1,
-                select: ['FileName']
+        // Configurar búsqueda vectorial
+        const searchOptions = {
+            count: true,
+            select: ['Chunk', 'archivoid', 'Folder', 'FileName', 'uniqueid', 'Perfil'],
+            vectorFilterMode: 'postFilter',
+            vectorQueries: [{
+                vector: embedding,
+                k: 15,
+                fields: this.vectorField,
+                kind: 'vector',
+                exhaustive: true
+            }],
+            top: 15
+        };
+
+        // Aplicar filtro de perfil si se especifica
+        if (perfil) {
+            searchOptions.filter = `search.in(Perfil, '${perfil}', '|')`;
+        }
+
+        // Ejecutar búsqueda
+        const searchResults = await this.searchClient.search("*", searchOptions);
+        const documentos = await this.procesarResultados(searchResults);
+
+        // Validar resultados
+        if (documentos.length === 0) {
+            return `No se encontraron documentos relevantes para: "${consulta}"${perfil ? ` (perfil: ${perfil})` : ''}`;
+        }
+
+        console.log(`✅ [${userId}] ${documentos.length} docs encontrados`);
+        return this.formatearResultados(consulta, documentos, perfil);
+    }
+
+
+    // ========================================
+    // PROCESAMIENTO
+    // ========================================
+
+    async procesarResultados(searchResults) {
+        const documentos = [];
+
+        for await (const result of searchResults.results) {
+            const doc = result.document || {};
+            const chunk = (doc.Chunk || '').trim();
+            const score = result.score || 0;
+
+            // Filtros de calidad
+            if (!chunk || chunk.length < 50 || score < 0.3) continue;
+
+            documentos.push({
+                fileName: doc.FileName || 'Sin nombre',
+                folder: doc.Folder || '',
+                perfil: doc.Perfil || '',
+                chunk: chunk,
+                score: score
             });
 
-            // Verificar si hay al menos un resultado
-            for await (const result of results.results) {
-                return true;
+            if (documentos.length >= 10) break;
+        }
+
+        return documentos;
+    }
+
+    formatearResultados(consulta, documentos, perfil) {
+        let resultado = `Información sobre: "${consulta}"`;
+        if (perfil) resultado += ` (perfil: ${perfil})`;
+        resultado += `\n\n`;
+
+        documentos.forEach((doc) => {
+            resultado += `${doc.chunk}\n\n---\n\n`;
+        });
+
+        resultado += `*${documentos.length} documento(s) encontrado(s)`;
+        if (perfil) resultado += ` | Perfil: ${perfil}`;
+        resultado += `*`;
+
+        return resultado;
+    }
+
+    // ========================================
+    // UTILIDADES
+    // ========================================
+
+    /**
+     * Obtiene el perfil del usuario desde el API de Nova
+     * @param {string} userToken - Token JWT del usuario
+     * @param {string} numSocio - Número de socio
+     * @returns {Promise<string>} Perfil (TipoServicioLimitado como string)
+     */
+    async obtenerPerfilDesdeAPI(userToken, numSocio) {
+        const url = process.env.NOVA_API_URL_TIPO_SERVICIO ||
+                    'https://pruebas.nova.com.mx/ApiRestNova/api/TipoServicio/obtTipoServicioPoSocio';
+
+        const body = {
+            usuarioActual: { CveUsuario: numSocio },
+            data: { NumSocio: numSocio }
+        };
+
+        try {
+            const response = await axios.post(url, body, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                timeout: 10000
+            });
+
+            const tipoServicio = response.data?.info?.[0]?.TipoServicioLimitado;
+
+            if (tipoServicio === undefined || tipoServicio === null) {
+                throw new Error('TipoServicioLimitado no encontrado en respuesta');
             }
-            
-            return true; // Conexión OK aunque no haya datos
+
+            // Convertir a string (1 → "1", 2 → "2", etc.)
+            return String(tipoServicio);
 
         } catch (error) {
-            console.error('Error en test de conexión:', error.message);
-            return false;
+            console.error(`❌ Error obteniendo perfil del API:`, error.message);
+            throw error;
         }
     }
 
-    async testEmbeddingConnection() {
-        if (!this.openaiAvailable) {
-            return false;
-        }
+    async createEmbedding(text) {
+        if (!this.openaiAvailable || !text) return null;
 
         try {
-            const testEmbedding = await this.createEmbedding("test");
-            return Array.isArray(testEmbedding) && testEmbedding.length > 1000;
+            const cleanText = text.trim().substring(0, 8000);
+            const result = await this.openaiClient.embeddings.create({
+                input: cleanText,
+                model: this.embeddingModel
+            });
+            return result.data[0]?.embedding || null;
         } catch (error) {
-            console.error('Error en test de embeddings:', error.message);
-            return false;
-        }
-    }
-
-    // MÉTODO DE PRUEBA PARA FILTROS DE PERFIL
-    async testProfileFilter(perfil) {
-        if (!this.searchAvailable) {
-            return { success: false, error: 'Servicio no disponible' };
-        }
-
-        try {
-            console.log(`Probando filtro de perfil: ${perfil}`);
-            
-            const searchOptions = {
-                select: ['FileName', 'Perfil'],
-                filter: `search.in(Perfil, '${perfil}', '|')`,
-                top: 5,
-                count: true
-            };
-
-            const results = await this.searchClient.search("*", searchOptions);
-            
-            const documentos = [];
-            let totalCount = 0;
-
-            for await (const result of results.results) {
-                totalCount++;
-                documentos.push({
-                    fileName: result.document.FileName,
-                    perfil: result.document.Perfil
-                });
-            }
-
-            return {
-                success: true,
-                totalCount,
-                documentos,
-                filter: searchOptions.filter
-            };
-
-        } catch (error) {
-            console.error('Error probando filtro de perfil:', error.message);
-            return { success: false, error: error.message };
+            console.error('❌ Embedding:', error.message);
+            return null;
         }
     }
 
     cleanup() {
-        console.log('Document Service limpiado');
+        console.log('DocumentService limpiado');
     }
 }
