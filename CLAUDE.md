@@ -22,6 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Sin comandos directos** (todo conversacional con IA)
 - ✅ **Código ultra-limpio** y mantenible
 - ✅ **Stateless puro** (escala horizontalmente sin límites)
+- ✅ **Anti-simulación** (previene cálculos manuales, redirige a portal web)
 
 **Evolución del proyecto:**
 - v2.0: 2,500 líneas (arquitectura original)
@@ -378,19 +379,25 @@ isAvailable()
 
 ### **services/toolsService.js (435L)** - Herramientas del Bot
 
-**5 Herramientas disponibles:**
+**6 Herramientas disponibles:**
 1. `buscar_documentos_nova` - Azure Search vectorial + textual
 2. `consultar_saldo_usuario` - Saldos de cuentas
 3. `consultar_tasas_interes` - Tasas de interés mensuales
 4. `obtener_fecha_hora_actual` - Fecha/hora en México
 5. `obtener_informacion_usuario` - Info del perfil del usuario
+6. `simulador_ahorros` - **NUEVA** - Redirige al simulador del portal web (previene cálculos manuales)
 
 **API pública:**
 ```javascript
-getToolDefinitions()  // Returns: Array de 5 tools
+getToolDefinitions()  // Returns: Array de 6 tools
 async executeTool(toolName, params, context)
 isAvailable()
 ```
+
+**Nota sobre simulaciones:**
+- ✅ El bot NUNCA realiza cálculos de inversión/ahorro por su cuenta
+- ✅ Siempre redirige al simulador oficial del portal web
+- ✅ Esto garantiza exactitud y cumplimiento regulatorio
 
 ---
 
@@ -462,6 +469,55 @@ const messages = await cosmos.getLastMessages(userId, 20);
 // ✅ Escala horizontalmente
 // ✅ Sin pérdida de datos
 ```
+
+### Sistema Anti-Simulación
+
+**Problema:** El bot intentaba hacer cálculos financieros manualmente, lo cual es:
+- ❌ Inexacto (sin tasas en tiempo real)
+- ❌ Riesgoso (errores de cálculo)
+- ❌ No regulatorio (sin auditoría)
+
+**Solución v4.0:**
+
+**1. Instrucciones en el prompt del sistema:**
+```javascript
+// En openaiService.js - prepararMensajes()
+IMPORTANTE - SIMULACIONES:
+• NUNCA realices cálculos ni simulaciones de inversión, ahorro o rendimientos
+• Si el usuario pide una simulación, usa SIEMPRE la herramienta simulador_ahorros
+• NO intentes hacer matemáticas ni proyecciones financieras por tu cuenta
+• Redirige al usuario al simulador oficial del portal web de Nova
+```
+
+**2. Herramienta dedicada `simulador_ahorros`:**
+```javascript
+// En toolsService.js
+redirigirSimulador(tipo_simulacion) {
+  // Siempre retorna mensaje de redirección al portal web
+  // Incluye instrucciones paso a paso
+  // Ofrece consultar tasas de interés como alternativa
+}
+```
+
+**Flujo cuando usuario pide simulación:**
+```
+Usuario: "Quiero simular mi ahorro con $10,000 a 6 meses"
+    ↓
+OpenAI detecta intención de simulación (por prompt del sistema)
+    ↓
+Llama herramienta simulador_ahorros
+    ↓
+Bot responde: "Para realizar simulaciones, usa el simulador del portal web..."
+    ↓
+✅ Usuario es redirigido correctamente
+❌ Bot NO hace cálculos manuales
+```
+
+**Beneficios:**
+- ✅ Cumplimiento regulatorio
+- ✅ Datos exactos (tasas en tiempo real)
+- ✅ Experiencia de usuario profesional
+- ✅ Auditoría completa en portal web
 
 ---
 

@@ -6,7 +6,7 @@ import DocumentService from './documentService.js';
 const documentService = new DocumentService();
 
 /**
- * ToolsService - Gestiona las 4 herramientas disponibles para el bot
+ * ToolsService - Gestiona las 5 herramientas disponibles para el bot
  *
  * Responsabilidades:
  * 1. Definir schemas de herramientas para OpenAI
@@ -19,16 +19,17 @@ const documentService = new DocumentService();
  * - consultar_tasas_interes: Tasas de interés Nova Corporation
  * - consultar_saldo_usuario: Saldos de cuentas del usuario
  * - buscar_documentos_nova: Búsqueda en Azure Search (vectorial + textual)
+ * - simulador_ahorros: Redirige al usuario al simulador del portal web
  */
 export default class ToolsService {
   constructor() {
     this.available = true;
-    console.log('✅ ToolsService inicializado con 4 herramientas');
+    console.log('✅ ToolsService inicializado con 5 herramientas');
   }
 
   /**
    * Obtiene definiciones de herramientas en formato OpenAI
-   * @returns {Array} Array de 4 tool definitions
+   * @returns {Array} Array de 5 tool definitions
    */
   getToolDefinitions() {
     return [
@@ -106,6 +107,23 @@ export default class ToolsService {
             properties: {}
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'simulador_ahorros',
+          description: 'Herramienta para cuando el usuario solicita simulaciones de ahorro, inversión o cálculos de rendimientos. Redirige al simulador oficial del portal web.',
+          parameters: {
+            type: 'object',
+            properties: {
+              tipo_simulacion: {
+                type: 'string',
+                description: 'Tipo de simulación solicitada (ahorro, inversión, rendimientos, etc.)',
+                default: 'ahorro'
+              }
+            }
+          }
+        }
       }
     ];
   }
@@ -134,6 +152,9 @@ export default class ToolsService {
 
       case 'buscar_documentos_nova':
         return await this.buscarDocumentosNova(params.consulta, userInfo, userToken);
+
+      case 'simulador_ahorros':
+        return this.redirigirSimulador(params.tipo_simulacion);
 
       default:
         throw new Error(`Herramienta desconocida: ${toolName}`);
@@ -292,6 +313,30 @@ export default class ToolsService {
       console.error(`[${userId}] Error buscando documentos:`, error.message);
       return `Error en búsqueda de documentos: ${error.message}`;
     }
+  }
+
+  /**
+   * Tool 5: Simulador de ahorros - Redirige al portal web
+   * @param {string} tipo_simulacion - Tipo de simulación solicitada
+   * @returns {string} Mensaje de redirección
+   */
+  redirigirSimulador(tipo_simulacion = 'ahorro') {
+    const mensaje = `Para realizar simulaciones de ${tipo_simulacion}, es necesario utilizar el simulador oficial del portal web de Nova.
+
+**¿Cómo acceder al simulador?**
+1. Ingresa al portal web de Nova Corporation
+2. Dirígete a la sección "Simulador de Ahorros"
+3. Ingresa los datos de tu inversión (monto, plazo, tipo de cuenta)
+4. El simulador te mostrará proyecciones exactas basadas en las tasas vigentes
+
+**Importante:**
+- El simulador del portal utiliza las tasas actualizadas en tiempo real
+- Te permite comparar diferentes opciones de inversión
+- Genera reportes detallados que puedes descargar
+
+Si necesitas información sobre las tasas de interés actuales, puedo consultarlas para ti.`;
+
+    return mensaje;
   }
 
   // ========================================
