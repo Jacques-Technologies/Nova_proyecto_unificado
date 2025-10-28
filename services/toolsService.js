@@ -399,7 +399,7 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
    * Formatea datos de saldo - RETORNA DATOS RAW PARA QUE LA IA DECIDA QUÉ MOSTRAR
    * @param {Object|Array} saldoData - Datos de saldo
    * @param {Object} userInfo - Info del usuario
-   * @returns {string} Datos estructurados para que la IA interprete
+   * @returns {string} Datos RAW estructurados para que la IA interprete
    */
   formatearSaldo(saldoData, userInfo) {
     // Extraer array de saldos según estructura de respuesta
@@ -416,41 +416,22 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
         '- Se necesite verificar la configuración con el administrador';
     }
 
-    // Normalizar y estructurar datos para que la IA pueda filtrar/interpretar
-    const cuentasNormalizadas = saldos.map((cuenta, index) => {
-      const disponible = parseFloat(cuenta.saldoDisponible ?? cuenta.disponible ?? cuenta.SaldoDisponible ?? 0);
-      const retenido = parseFloat(cuenta.saldoRetenido ?? cuenta.retenido ?? cuenta.SaldoRetenido ?? 0);
-      const tipoCuenta = cuenta.tipoCuenta ?? cuenta.tipo ?? cuenta.TipoCuenta ?? `Cuenta ${index + 1}`;
-
-      return {
-        tipo: tipoCuenta,
-        disponible: disponible,
-        retenido: retenido,
-        total: disponible + retenido
-      };
-    });
-
-    // Retornar JSON estructurado para que la IA pueda interpretar
+    // Retornar datos RAW exactamente como vienen de la API
     const resultado = {
       usuario: userInfo.nombre || userInfo.usuario,
-      cuentas: cuentasNormalizadas
+      cuentas: saldos  // ← Datos sin modificar de la API
     };
 
-    // Convertir a string legible para la IA
+    // Convertir a string legible para la IA (JSON formateado)
     let output = `Información de saldos para ${resultado.usuario}:\n\n`;
-    output += 'CUENTAS DISPONIBLES:\n';
-
-    resultado.cuentas.forEach(cuenta => {
-      output += `\n${cuenta.tipo}:\n`;
-      output += `  - Saldo disponible: $${cuenta.disponible.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      output += `  - Saldo retenido: $${cuenta.retenido.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      output += `  - Total: $${cuenta.total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-    });
-
-    output += '\n---\n';
-    output += 'INSTRUCCIÓN: Usa esta información para responder a la pregunta específica del usuario. ';
-    output += 'Si pregunta por UNA cuenta específica (ej: "mi cuenta vista", "saldo fijo 6M"), ';
-    output += 'muestra SOLO esa cuenta. Si pregunta genéricamente, puedes mostrar todas o hacer un resumen según contexto.';
+    output += 'DATOS DE LA API (sin modificar):\n';
+    output += JSON.stringify(saldos, null, 2);
+    output += '\n\n---\n';
+    output += 'INSTRUCCIONES PARA LA IA:\n';
+    output += '1. Si el usuario pregunta por UNA cuenta específica (ej: "mi cuenta vista", "saldo fijo 6M"), muestra SOLO esa cuenta.\n';
+    output += '2. Si el usuario NO especificó una cuenta o agrupación específica (ej: "mi saldo", "cuánto tengo"), muestra información de TODAS las cuentas disponibles.\n';
+    output += '3. Interpreta los datos tal como vienen de la API, respetando los nombres de campos exactos.\n';
+    output += '4. Formatea los montos en formato de moneda mexicana ($X,XXX.XX) para mejor legibilidad.';
 
     return output;
   }
