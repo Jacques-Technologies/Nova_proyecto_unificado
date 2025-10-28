@@ -6,30 +6,31 @@ import DocumentService from './documentService.js';
 const documentService = new DocumentService();
 
 /**
- * ToolsService - Gestiona las 5 herramientas disponibles para el bot
+ * ToolsService - Gestiona las 6 herramientas disponibles para el bot
  *
  * Responsabilidades:
  * 1. Definir schemas de herramientas para OpenAI
  * 2. Ejecutar cada herramienta
- * 3. Formatear resultados
+ * 3. Formatear resultados (mínimamente - deja que la IA interprete)
  * 4. Manejo de errores específicos
  *
  * Herramientas disponibles:
  * - obtener_informacion_usuario: Info del perfil del usuario
- * - consultar_tasas_interes: Tasas de interés Nova Corporation
- * - consultar_saldo_usuario: Saldos de cuentas del usuario
+ * - obtener_fecha_hora_actual: Fecha/hora en zona México
+ * - consultar_tasas_interes: Tasas de interés Nova
+ * - consultar_saldo_usuario: Saldos de TODAS las cuentas (la IA filtra según pregunta)
  * - buscar_documentos_nova: Búsqueda en Azure Search (vectorial + textual)
  * - simulador_ahorros: Redirige al usuario al simulador del portal web
  */
 export default class ToolsService {
   constructor() {
     this.available = true;
-    console.log('✅ ToolsService inicializado con 5 herramientas');
+    console.log('✅ ToolsService inicializado con 6 herramientas');
   }
 
   /**
    * Obtiene definiciones de herramientas en formato OpenAI
-   * @returns {Array} Array de 5 tool definitions
+   * @returns {Array} Array de 6 tool definitions
    */
   getToolDefinitions() {
     return [
@@ -37,7 +38,7 @@ export default class ToolsService {
         type: 'function',
         function: {
           name: 'buscar_documentos_nova',
-          description: 'Busca información específica en documentación interna de Nova Corporation (APIs, políticas, procedimientos)',
+          description: 'Busca información específica en documentación interna de Nova (APIs, políticas, procedimientos, uso del portal, contraseñas)',
           parameters: {
             type: 'object',
             properties: {
@@ -82,7 +83,7 @@ export default class ToolsService {
         type: 'function',
         function: {
           name: 'consultar_tasas_interes',
-          description: 'Consulta tasas de interés mensuales de Nova Corporation',
+          description: 'Consulta tasas de interés mensuales de Nova',
           parameters: {
             type: 'object',
             properties: {
@@ -101,7 +102,7 @@ export default class ToolsService {
         type: 'function',
         function: {
           name: 'consultar_saldo_usuario',
-          description: 'Consulta saldos del usuario. Requiere autenticación.',
+          description: 'Consulta saldos de las cuentas del usuario. Retorna información de TODAS las cuentas (Vista, Fijo 1M, Fijo 3M, Fijo 6M, etc). La IA debe filtrar y mostrar solo lo que el usuario pidió específicamente.',
           parameters: {
             type: 'object',
             properties: {}
@@ -324,7 +325,7 @@ export default class ToolsService {
     const mensaje = `Para realizar simulaciones de ${tipo_simulacion}, es necesario utilizar el simulador oficial del portal web de Nova.
 
 **¿Cómo acceder al simulador?**
-1. Ingresa al portal web de Nova Corporation
+1. Ingresa al portal web de Nova
 2. Dirígete a la sección "Simulador de Ahorros"
 3. Ingresa los datos de tu inversión (monto, plazo, tipo de cuenta)
 4. El simulador te mostrará proyecciones exactas basadas en las tasas vigentes
@@ -354,7 +355,7 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
       return 'No hay datos de tasas disponibles';
     }
 
-    let respuesta = `Tasas de interés Nova Corporation ${anio}:\n\n`;
+    let respuesta = `Tasas de interés Nova ${anio}:\n\n`;
 
     tasasData.forEach(item => {
       const mes = (item.Mes || '').toString();
@@ -373,14 +374,12 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
   }
 
   /**
-   * Formatea datos de saldo
+   * Formatea datos de saldo - RETORNA DATOS RAW PARA QUE LA IA DECIDA QUÉ MOSTRAR
    * @param {Object|Array} saldoData - Datos de saldo
    * @param {Object} userInfo - Info del usuario
-   * @returns {string} Saldo formateado
+   * @returns {string} Datos estructurados para que la IA interprete
    */
   formatearSaldo(saldoData, userInfo) {
-    let resultado = `Consulta de saldo para ${userInfo.nombre || userInfo.usuario}:\n\n`;
-
     // Extraer array de saldos según estructura de respuesta
     let saldos = [];
     if (Array.isArray(saldoData?.info)) saldos = saldoData.info;
@@ -388,37 +387,50 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
     else if (Array.isArray(saldoData)) saldos = saldoData;
 
     if (!saldos.length) {
-      return resultado + 'No se encontraron cuentas asociadas a este usuario. ' +
+      return `No se encontraron cuentas asociadas al usuario ${userInfo.nombre || userInfo.usuario}. ` +
         'Es posible que:\n' +
         '- El usuario no tenga cuentas activas\n' +
         '- Las cuentas no estén asociadas correctamente en el sistema\n' +
         '- Se necesite verificar la configuración con el administrador';
     }
 
-    let totalDisponible = 0;
-    let totalRetenido = 0;
+    // Normalizar y estructurar datos para que la IA pueda filtrar/interpretar
+    const cuentasNormalizadas = saldos.map((cuenta, index) => {
+      const disponible = parseFloat(cuenta.saldoDisponible ?? cuenta.disponible ?? cuenta.SaldoDisponible ?? 0);
+      const retenido = parseFloat(cuenta.saldoRetenido ?? cuenta.retenido ?? cuenta.SaldoRetenido ?? 0);
+      const tipoCuenta = cuenta.tipoCuenta ?? cuenta.tipo ?? cuenta.TipoCuenta ?? `Cuenta ${index + 1}`;
 
-    saldos.forEach((cuenta, index) => {
-      const disp = parseFloat(cuenta.saldoDisponible ?? cuenta.disponible ?? cuenta.SaldoDisponible ?? 0);
-      const ret = parseFloat(cuenta.saldoRetenido ?? cuenta.retenido ?? cuenta.SaldoRetenido ?? 0);
-      const tipo = cuenta.tipoCuenta ?? cuenta.tipo ?? cuenta.TipoCuenta ?? `Cuenta ${index + 1}`;
-
-      totalDisponible += disp;
-      totalRetenido += ret;
-
-      resultado += `${tipo}:\n`;
-      resultado += `  - Disponible: $${disp.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      resultado += `  - Retenido: $${ret.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-      resultado += `  - Total: $${(disp + ret).toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n\n`;
+      return {
+        tipo: tipoCuenta,
+        disponible: disponible,
+        retenido: retenido,
+        total: disponible + retenido
+      };
     });
 
-    const totalGeneral = totalDisponible + totalRetenido;
-    resultado += `RESUMEN:\n`;
-    resultado += `- Total Disponible: $${totalDisponible.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-    resultado += `- Total Retenido: $${totalRetenido.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
-    resultado += `- TOTAL GENERAL: $${totalGeneral.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
+    // Retornar JSON estructurado para que la IA pueda interpretar
+    const resultado = {
+      usuario: userInfo.nombre || userInfo.usuario,
+      cuentas: cuentasNormalizadas
+    };
 
-    return resultado;
+    // Convertir a string legible para la IA
+    let output = `Información de saldos para ${resultado.usuario}:\n\n`;
+    output += 'CUENTAS DISPONIBLES:\n';
+
+    resultado.cuentas.forEach(cuenta => {
+      output += `\n${cuenta.tipo}:\n`;
+      output += `  - Saldo disponible: $${cuenta.disponible.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
+      output += `  - Saldo retenido: $${cuenta.retenido.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
+      output += `  - Total: $${cuenta.total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}\n`;
+    });
+
+    output += '\n---\n';
+    output += 'INSTRUCCIÓN: Usa esta información para responder a la pregunta específica del usuario. ';
+    output += 'Si pregunta por UNA cuenta específica (ej: "mi cuenta vista", "saldo fijo 6M"), ';
+    output += 'muestra SOLO esa cuenta. Si pregunta genéricamente, puedes mostrar todas o hacer un resumen según contexto.';
+
+    return output;
   }
 
   // ========================================
