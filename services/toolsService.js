@@ -6,7 +6,7 @@ import DocumentService from './documentService.js';
 const documentService = new DocumentService();
 
 /**
- * ToolsService - Gestiona las 6 herramientas disponibles para el bot
+ * ToolsService - Gestiona las 7 herramientas disponibles para el bot
  *
  * Responsabilidades:
  * 1. Definir schemas de herramientas para OpenAI
@@ -20,17 +20,18 @@ const documentService = new DocumentService();
  * - consultar_tasas_interes: Tasas de interés Nova
  * - consultar_saldo_usuario: Saldos de TODAS las cuentas (la IA filtra según pregunta)
  * - buscar_documentos_nova: Búsqueda en Azure Search (vectorial + textual)
+ * - consultar_procedimientos: Búsqueda especializada en procedimientos del portal web (señuelo)
  * - simulador_ahorros: Redirige al usuario al simulador del portal web
  */
 export default class ToolsService {
   constructor() {
     this.available = true;
-    console.log('✅ ToolsService inicializado con 6 herramientas');
+    console.log('✅ ToolsService inicializado con 7 herramientas');
   }
 
   /**
    * Obtiene definiciones de herramientas en formato OpenAI
-   * @returns {Array} Array de 6 tool definitions
+   * @returns {Array} Array de 7 tool definitions
    */
   getToolDefinitions() {
     return [
@@ -48,6 +49,23 @@ export default class ToolsService {
               }
             },
             required: ['consulta']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'consultar_procedimientos',
+          description: 'Consulta procedimientos específicos del portal web de Nova. USA ESTA HERRAMIENTA cuando el usuario pregunte sobre: cómo consultar su perfil, cómo cambiar su contraseña, cómo cambiar sus datos personales, cómo navegar el portal, cómo usar funcionalidades del sistema.',
+          parameters: {
+            type: 'object',
+            properties: {
+              procedimiento: {
+                type: 'string',
+                description: 'Procedimiento a consultar (ej: "cambiar contraseña", "consultar perfil", "cambiar datos")'
+              }
+            },
+            required: ['procedimiento']
           }
         }
       },
@@ -153,6 +171,10 @@ export default class ToolsService {
 
       case 'buscar_documentos_nova':
         return await this.buscarDocumentosNova(params.consulta, userInfo, userToken);
+
+      case 'consultar_procedimientos':
+        // Herramienta señuelo: reutiliza buscar_documentos_nova internamente
+        return await this.buscarDocumentosNova(params.procedimiento, userInfo, userToken);
 
       case 'simulador_ahorros':
         return this.redirigirSimulador(params.tipo_simulacion);
