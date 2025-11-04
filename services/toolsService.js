@@ -247,7 +247,7 @@ export default class ToolsService {
   }
 
   /**
-   * Tool 3: Consultar saldo del usuario
+   * Tool 3: Consultar saldo del usuario (Ahorros y Préstamos)
    * @param {string} userToken - Token JWT
    * @param {Object} userInfo - Info del usuario
    * @returns {Promise<string>} Saldo formateado
@@ -261,13 +261,13 @@ export default class ToolsService {
     const cveUsuario = userInfo.usuario;
     const requestBody = {
       usuarioActual: { CveUsuario: cveUsuario },
-      data: { NumSocio: cveUsuario, TipoSist: '' }
+      data: { NumSocio: cveUsuario }
     };
 
     console.log(`🔍 [consultarSaldo] Request para usuario: ${cveUsuario}`);
 
     const url = process.env.NOVA_API_URL_SALDO ||
-      'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaSaldo/ObtSaldo';
+      'https://pruebas.nova.com.mx/ApiRestNova/api/SaldoProducto/obtSaldoProducto';
 
     const result = await this._callNovaAPI(url, requestBody, userToken, 'consultar saldo');
 
@@ -397,41 +397,100 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
 
   /**
    * Formatea datos de saldo - RETORNA DATOS RAW PARA QUE LA IA DECIDA QUÉ MOSTRAR
-   * @param {Object|Array} saldoData - Datos de saldo
+   * Maneja la nueva estructura: { saldoAhorro: {...}, saldoPrestamo: {...}, status: "success" }
+   * @param {Object} saldoData - Datos de saldo de la API
    * @param {Object} userInfo - Info del usuario
    * @returns {string} Datos RAW estructurados para que la IA interprete
    */
   formatearSaldo(saldoData, userInfo) {
-    // Extraer array de saldos según estructura de respuesta
-    let saldos = [];
-    if (Array.isArray(saldoData?.info)) saldos = saldoData.info;
-    else if (Array.isArray(saldoData?.data)) saldos = saldoData.data;
-    else if (Array.isArray(saldoData)) saldos = saldoData;
+    console.log('📋 [formatearSaldo] Iniciando formateo...');
+    console.log('📋 [formatearSaldo] Estructura recibida:', {
+      hasData: !!saldoData,
+      dataType: typeof saldoData,
+      keys: saldoData ? Object.keys(saldoData) : [],
+      hasSaldoAhorro: !!saldoData?.saldoAhorro,
+      hasSaldoPrestamo: !!saldoData?.saldoPrestamo,
+      status: saldoData?.status
+    });
 
-    if (!saldos.length) {
-      return `No se encontraron cuentas asociadas al usuario ${userInfo.nombre || userInfo.usuario}. ` +
+    // Verificar que tengamos datos
+    if (!saldoData || typeof saldoData !== 'object') {
+      console.log('❌ [formatearSaldo] Sin datos válidos');
+      return `No se pudo obtener información de saldo para ${userInfo.nombre || userInfo.usuario}`;
+    }
+
+    // Extraer ahorros y préstamos
+    const ahorros = saldoData.saldoAhorro?.info || [];
+    const prestamos = saldoData.saldoPrestamo?.info || [];
+    const hasAhorros = Array.isArray(ahorros) && ahorros.length > 0;
+    const hasPrestamos = Array.isArray(prestamos) && prestamos.length > 0;
+
+    console.log('📋 [formatearSaldo] Datos extraídos:', {
+      ahorrosCount: ahorros.length,
+      prestamosCount: prestamos.length,
+      hasAhorros,
+      hasPrestamos
+    });
+
+    // Si no hay datos de ninguno de los dos
+    if (!hasAhorros && !hasPrestamos) {
+      return `No se encontraron productos de ahorro ni préstamos asociados al usuario ${userInfo.nombre || userInfo.usuario}. ` +
         'Es posible que:\n' +
-        '- El usuario no tenga cuentas activas\n' +
-        '- Las cuentas no estén asociadas correctamente en el sistema\n' +
+        '- El usuario no tenga productos activos\n' +
+        '- Los productos no estén asociados correctamente en el sistema\n' +
         '- Se necesite verificar la configuración con el administrador';
     }
 
-    // Retornar datos RAW exactamente como vienen de la API
-    const resultado = {
-      usuario: userInfo.nombre || userInfo.usuario,
-      cuentas: saldos  // ← Datos sin modificar de la API
-    };
+    // Construir output con TODA la información disponible
+    let output = `Información financiera completa para ${userInfo.nombre || userInfo.usuario}:\n\n`;
+    output += '═══════════════════════════════════════════════════════════\n\n';
 
-    // Convertir a string legible para la IA (JSON formateado)
-    let output = `Información de saldos para ${resultado.usuario}:\n\n`;
-    output += 'DATOS DE LA API (sin modificar):\n';
-    output += JSON.stringify(saldos, null, 2);
-    output += '\n\n---\n';
-    output += 'INSTRUCCIONES PARA LA IA:\n';
-    output += '1. Si el usuario pregunta por UNA cuenta específica (ej: "mi cuenta vista", "saldo fijo 6M"), muestra SOLO esa cuenta.\n';
-    output += '2. Si el usuario NO especificó una cuenta o agrupación específica (ej: "mi saldo", "cuánto tengo"), muestra información de TODAS las cuentas disponibles.\n';
-    output += '3. Interpreta los datos tal como vienen de la API, respetando los nombres de campos exactos.\n';
-    output += '4. Formatea los montos en formato de moneda mexicana ($X,XXX.XX) para mejor legibilidad.';
+    // Sección de AHORROS
+    if (hasAhorros) {
+      output += '📊 PRODUCTOS DE AHORRO:\n';
+      output += JSON.stringify(ahorros, null, 2);
+      output += '\n\n';
+    } else {
+      output += '📊 PRODUCTOS DE AHORRO: Sin productos de ahorro\n\n';
+    }
+
+    output += '───────────────────────────────────────────────────────────\n\n';
+
+    // Sección de PRÉSTAMOS
+    if (hasPrestamos) {
+      output += '💳 PRÉSTAMOS:\n';
+      output += JSON.stringify(prestamos, null, 2);
+      output += '\n\n';
+    } else {
+      output += '💳 PRÉSTAMOS: Sin préstamos activos\n\n';
+    }
+
+    output += '═══════════════════════════════════════════════════════════\n\n';
+
+    // INSTRUCCIONES PARA LA IA
+    output += '🤖 INSTRUCCIONES PARA LA IA:\n\n';
+    output += '1. **Filtrado por solicitud:**\n';
+    output += '   - Si el usuario pregunta por AHORROS específicos (ej: "mi cuenta vista", "saldo fijo 6M"), muestra SOLO esos productos de ahorro.\n';
+    output += '   - Si el usuario pregunta por PRÉSTAMOS (ej: "mis préstamos", "cuánto debo"), muestra SOLO préstamos.\n';
+    output += '   - Si NO especifica (ej: "mi saldo", "cuánto tengo"), muestra TODO: ahorros Y préstamos.\n\n';
+
+    output += '2. **Estructura de datos:**\n';
+    output += '   - AHORROS tienen: Concepto, FechaVencimiento, SaldoTotal, InteresProyectado\n';
+    output += '   - PRÉSTAMOS tienen: Concepto, Pago (cuotasPagadas/cuotasTotales), Saldo (monto por pagar)\n\n';
+
+    output += '3. **Presentación:**\n';
+    output += '   - Formatea montos en pesos mexicanos: $X,XXX.XX\n';
+    output += '   - Agrupa productos similares si hay muchos (ej: varios "AHORRO PLAZO FIJO TIPO 1")\n';
+    output += '   - Muestra fechas de vencimiento de manera legible\n';
+    output += '   - Para préstamos, explica el progreso (ej: "0 de 48 cuotas pagadas")\n\n';
+
+    output += '4. **Importante:**\n';
+    output += '   - Saldos negativos en ahorros pueden indicar ajustes o sobregiros\n';
+    output += '   - InteresProyectado NULL significa que no aplica interés para ese producto\n';
+    output += '   - Respeta los nombres exactos de productos tal como vienen de la API';
+
+    console.log(`✅ [formatearSaldo] Formateo completado: ${output.length} caracteres`);
+    console.log(`📊 [formatearSaldo] Resumen: ${ahorros.length} ahorros, ${prestamos.length} préstamos`);
 
     return output;
   }
