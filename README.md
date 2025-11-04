@@ -94,10 +94,6 @@
 ### **Pasos de Instalación**
 
 1. **Clonar el repositorio**
-   ```bash
-   git clone <repository-url>
-   cd nova-bot
-   ```
 
 2. **Instalar dependencias**
    ```bash
@@ -252,11 +248,20 @@ Para integraciones web, el bot expone una API REST:
 ```javascript
 // Inicializar chat
 POST /api/webchat/init
-Headers: { "Authorization": "Bearer <token>" }
+Body: {
+  "token": "<token>",
+  "perfil": "<perfil>" // opcional
+}
 
 // Enviar mensaje
 POST /api/webchat/ask
-Body: { "message": "¿Cuál es mi saldo?", "token": "<token>" }
+Body: {
+  "token": "<token>",
+  "content": "¿Cuál es mi saldo?",
+  "perfil": "<perfil>", // opcional
+  "CveUsuario": "<usuario>", // opcional
+  "NumRI": "<numRI>" // opcional
+}
 
 // Obtener historial
 GET /api/webchat/history?token=<token>
@@ -345,21 +350,6 @@ nova-bot/
 | `/api/sendPdf` | POST | Procesar y almacenar PDF |
 | `/api/sendWord` | POST | Procesar y almacenar Word (.doc/.docx) |
 
----
-
-## 🔧 Desarrollo
-
-### **Scripts Disponibles**
-
-```bash
-# Desarrollo con hot reload
-npm run dev
-
-# Producción
-npm start
-
-# Verificar sintaxis
-npm run check
 ```
 
 ### **Agregar Nuevas Herramientas**
@@ -509,7 +499,7 @@ echo $COSMOS_DB_CONTAINER_ID
 
 - **Backend:** Node.js + Express
 - **Bot Framework:** Microsoft Bot Builder SDK
-- **IA:** OpenAI GPT-4 (gpt-4-turbo-mini)
+- **IA:** OpenAI GPT-4.1-mini
 - **Persistencia:** Azure Cosmos DB
 - **Búsqueda:** Azure Cognitive Search
 - **Embeddings:** text-embedding-3-large (1024 dimensiones)
