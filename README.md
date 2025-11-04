@@ -1,17 +1,17 @@
-# 🤖 Nova Bot - Sistema Simplificado
+# 🤖 Nova Bot - Sistema de Chatbot Corporativo
 
 ![Bot Status](https://img.shields.io/badge/Status-Active-green)
-![Version](https://img.shields.io/badge/Version-2.0.0-blue)
+![Version](https://img.shields.io/badge/Version-4.0.0-blue)
 ![Auth](https://img.shields.io/badge/Auth-Custom_Login-orange)
 ![AI](https://img.shields.io/badge/AI-OpenAI_GPT4-purple)
+![Platform](https://img.shields.io/badge/Platform-Teams_&_WebChat-blue)
 
-**Nova Bot** es un chatbot corporativo simplificado para Microsoft Teams que utiliza **autenticación personalizada** con API de Nova y **OpenAI GPT-4** para interacciones inteligentes.
+**Nova Bot** es un sistema de chatbot corporativo inteligente diseñado para Microsoft Teams y WebChat. Integra autenticación personalizada con la API de Nova y utiliza OpenAI GPT-4 con herramientas especializadas para proporcionar asistencia contextual y profesional.
 
 ## 📋 Tabla de Contenidos
 
 - [🌟 Características](#-características)
 - [🏗️ Arquitectura](#️-arquitectura)
-- [🔄 Flujo Visual](#-flujo-visual)
 - [⚙️ Instalación](#️-instalación)
 - [🛠️ Configuración](#️-configuración)
 - [🚀 Uso del Bot](#-uso-del-bot)
@@ -19,101 +19,77 @@
 - [🌐 API Endpoints](#-api-endpoints)
 - [🔧 Desarrollo](#-desarrollo)
 - [❓ Troubleshooting](#-troubleshooting)
-- [📊 Ejemplos](#-ejemplos)
+
+---
 
 ## 🌟 Características
 
-### ✅ **Funcionalidades Activas**
-- 🔐 **Login Personalizado** - Tarjeta con usuario/contraseña
-- 🤖 **Chat Inteligente** - Integración con OpenAI GPT-4 Turbo
-- 🔑 **Gestión de Tokens** - Manejo seguro de tokens de Nova API
-- 👤 **Información de Usuario** - Datos extraídos del token JWT
-- 🚪 **Logout Simple** - Comando "logout" para cerrar sesión
-- 💾 **Almacenamiento en Memoria** - Datos temporales sin persistencia
-- 📱 **Compatible con Teams** - Optimizado para Microsoft Teams
+### **Funcionalidades Principales**
+
+- 🔐 **Autenticación Personalizada** - Sistema de login con usuario/contraseña integrado con API Nova
+- 💾 **Persistencia en Azure Cosmos DB** - Almacenamiento confiable de sesiones e historial (TTL automático)
+- 🤖 **IA Conversacional** - OpenAI GPT-4 con contexto completo de conversación
+- 🛠️ **Herramientas Especializadas**:
+  - Búsqueda en documentos (Azure Cognitive Search)
+  - Consulta de saldos de cuentas
+  - Consulta de tasas de interés
+  - Información del perfil del usuario
+  - Obtención de fecha/hora actual
+  - Simulador de ahorros (redirige a portal web)
+- 🔒 **Sistema Anti-Simulación** - Previene cálculos manuales, redirige a herramientas oficiales
+- 💡 **Clarificación Inteligente** - Detecta intenciones ambiguas y solicita aclaración
+- 📱 **Multi-Plataforma** - Soporte para Microsoft Teams y WebChat
+- 🔄 **Multi-Bot** - Configuración para múltiples bots simultáneos
+- ⚡ **Stateless** - Arquitectura sin estado en memoria, 100% escalable
+
+---
 
 ## 🏗️ Arquitectura
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Microsoft     │    │   Nova Bot      │    │   Nova API      │
-│     Teams       │◄──►│   (Node.js)     │◄──►│  Authentication │
-│                 │    │                 │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │   OpenAI API    │
-                       │   (GPT-4 Turbo) │
-                       └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Microsoft     │    │    Nova Bot      │    │   Nova API      │
+│     Teams       │◄──►│    (Node.js)     │◄──►│  Authentication │
+│                 │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                               │
+                               ├──────────────────┐
+                               │                  │
+                               ▼                  ▼
+                   ┌──────────────────┐  ┌──────────────────┐
+                   │   OpenAI API     │  │  Azure Cosmos DB │
+                   │   (GPT-4)        │  │  (Persistencia)  │
+                   └──────────────────┘  └──────────────────┘
+                               │
+                               ▼
+                   ┌──────────────────┐
+                   │  Azure Search    │
+                   │  (Documentos)    │
+                   └──────────────────┘
 ```
 
-### **Componentes Principales:**
+### **Componentes Clave**
 
-1. **TeamsBot** - Maneja mensajes y autenticación
-2. **OpenAI Service** - Procesa conversaciones con IA
-3. **Dialog Bot** - Base para manejo de estados
-4. **Memory Storage** - Almacenamiento temporal
+1. **TeamsBot** - Bot principal con autenticación y lógica conversacional (305 líneas)
+2. **OpenAI Service** - Integración con GPT-4 y coordinación de herramientas
+3. **Tools Service** - 6 herramientas especializadas para consultas
+4. **Auth Service** - Gestión de autenticación y sesiones
+5. **Cosmos Service** - Persistencia de sesiones y mensajes
+6. **Document Service** - Búsqueda vectorial en documentos
+7. **WebChat Controller** - API REST para interfaz web
 
-## 🔄 Flujo Visual
-
-### **🔐 Flujo de Autenticación**
-
-```
-Usuario                    Nova Bot                    Nova API
-  │                           │                           │
-  │─── Inicia conversación ──►│                           │
-  │                           │                           │
-  │◄── Tarjeta de Login ──────│                           │
-  │                           │                           │
-  │─── Envía credenciales ───►│                           │
-  │                           │──── POST /Auth/login ────►│
-  │                           │                           │
-  │                           │◄──── Token + Info ────────│
-  │                           │                           │
-  │◄─── Bienvenida + Token ───│                           │
-  │                           │                           │
-```
-
-### **💬 Flujo de Conversación**
-
-```
-Usuario Autenticado        Nova Bot                OpenAI API
-         │                     │                       │
-         │──── Mensaje ───────►│                       │
-         │                     │                       │
-         │                     │─── Prompt + Context ─►│
-         │                     │                       │
-         │                     │◄─── Respuesta ────────│
-         │                     │                       │
-         │◄─── Respuesta ──────│                       │
-         │                     │                       │
-```
-
-### **🚪 Flujo de Logout**
-
-```
-Usuario                    Nova Bot
-  │                           │
-  │───── "logout" ───────────►│
-  │                           │
-  │                           │ (Limpia memoria)
-  │                           │ (Limpia estados)
-  │                           │
-  │◄── Sesión cerrada ────────│
-  │                           │
-  │◄── Nueva tarjeta login ───│
-  │                           │
-```
+---
 
 ## ⚙️ Instalación
 
 ### **Prerequisitos**
 
-- Node.js 16+ 
-- npm o yarn
-- Cuenta de OpenAI con API Key
-- Bot Framework registration en Azure
+- Node.js 18+
+- npm 9+
+- Cuenta de OpenAI con acceso a GPT-4
+- Azure Bot Framework registration
+- Azure Cosmos DB account
+- Azure Cognitive Search (opcional, para búsqueda de documentos)
 
 ### **Pasos de Instalación**
 
@@ -136,453 +112,420 @@ Usuario                    Nova Bot
 
 4. **Ejecutar el bot**
    ```bash
+   # Desarrollo
+   npm run dev
+
+   # Producción
    npm start
    ```
 
+---
+
 ## 🛠️ Configuración
 
-### **Variables de Entorno**
+### **Variables de Entorno Requeridas**
 
-Crea un archivo `.env` con la siguiente configuración:
+Crea un archivo `.env` en la raíz del proyecto:
 
 ```bash
 # =============================================================================
-# CONFIGURACIÓN REQUERIDA
+# BOT FRAMEWORK - OBLIGATORIO
 # =============================================================================
-
-# Bot Framework (obligatorio)
-MicrosoftAppId=12345678-1234-1234-1234-123456789012
-MicrosoftAppPassword=tu_password_secreto_del_bot
-
-# OpenAI (obligatorio)
-OPENAI_API_KEY=sk-1234567890abcdefghijklmnopqrstuvwxyz
+MicrosoftAppId=tu-app-id-aqui
+MicrosoftAppPassword=tu-app-password-aqui
+MicrosoftAppType=SingleTenant
+MicrosoftAppTenantId=tu-tenant-id-aqui
 
 # =============================================================================
-# CONFIGURACIÓN OPCIONAL
+# OPENAI - OBLIGATORIO
 # =============================================================================
+OPENAI_API_KEY=sk-tu-api-key-aqui
+OPENAI_ENDPOINT=https://tu-endpoint.openai.azure.com
 
-# Puerto del servidor (default: 3978)
+# =============================================================================
+# AZURE COSMOS DB - OBLIGATORIO
+# =============================================================================
+COSMOS_DB_ENDPOINT=https://tu-cuenta.documents.azure.com:443/
+COSMOS_DB_KEY=tu-cosmos-key-aqui
+COSMOS_DB_DATABASE_ID=NovaBot
+COSMOS_DB_CONTAINER_ID=conversations
+
+# =============================================================================
+# AZURE COGNITIVE SEARCH - OPCIONAL
+# =============================================================================
+AZURE_SEARCH_ENDPOINT=https://tu-servicio.search.windows.net
+AZURE_SEARCH_API_KEY=tu-search-key-aqui
+AZURE_SEARCH_INDEX_NAME=nova-documents
+
+# =============================================================================
+# CONFIGURACIÓN DEL SERVIDOR
+# =============================================================================
 PORT=3978
+NODE_ENV=production
 
-# Modo de desarrollo
-NODE_ENV=development
+# =============================================================================
+# MULTI-BOT (OPCIONAL) - Para bots adicionales
+# =============================================================================
+MicrosoftAppId_Bot2=tu-app-id-bot2
+MicrosoftAppPassword_Bot2=tu-app-password-bot2
+
+MicrosoftAppId_Bot3=tu-app-id-bot3
+MicrosoftAppPassword_Bot3=tu-app-password-bot3
 ```
 
-### **Configuración en Azure**
+### **Configuración de Azure Cosmos DB**
 
-1. **Crear Bot Service** en Azure Portal
-2. **Configurar Messaging Endpoint**: `https://tu-dominio.com/api/messages`
-3. **Obtener App ID y Password**
-4. **Configurar canales** (Teams)
+El bot utiliza **partition key `/user_id`** con TTL automático:
 
-### **Configuración de OpenAI**
+- **Sesiones (type: user)**: TTL de 60 minutos
+- **Mensajes (type: message)**: TTL de 24 horas
 
-1. Obtener API Key de [OpenAI Platform](https://platform.openai.com)
-2. Configurar límites de uso según necesidades
-3. Verificar acceso a GPT-4 Turbo
+**No requiere configuración manual** - El bot crea contenedores automáticamente.
+
+---
 
 ## 🚀 Uso del Bot
 
-### **1. Primer Contacto**
+### **1. Login (Teams)**
 
-Cuando un usuario inicia conversación:
+Cuando un usuario inicia conversación en Teams:
 
 ```
-👋 Bienvenido a Nova Bot
+👋 ¡Hola! Soy NovaBot, tu asistente virtual.
 
-Por favor, ingresa tus credenciales para continuar:
+Para comenzar, necesito que inicies sesión.
 
 ┌─────────────────────────────────────┐
-│ 🔐 Iniciar Sesión                   │
+│ 🔐 Iniciar Sesión en Nova          │
 ├─────────────────────────────────────┤
 │                                     │
-│ Usuario:                            │
+│ 👤 Usuario:                         │
 │ [________________]                  │
 │                                     │
-│ Contraseña:                         │
+│ 🔒 Contraseña:                      │
 │ [****************]                  │
-│                                     │
-│ 🔒 Tus credenciales se envían       │
-│    de forma segura                  │
 │                                     │
 │         [🚀 Iniciar Sesión]         │
 └─────────────────────────────────────┘
 ```
 
-### **2. Login Exitoso**
+### **2. Conversación Natural**
+
+Una vez autenticado, el usuario puede hacer preguntas naturales:
 
 ```
-✅ ¡Bienvenido, Juan Pérez!
+Usuario: ¿Cuál es mi saldo?
 
-🎉 Login exitoso
-👤 Usuario: 91004
-🔑 Token: eyJhbGciOiJIUzI1NiIsInR5cCI...
+Bot: Consultando tu saldo actual...
 
-💬 Ya puedes usar todas las funciones del bot.
+     💰 Saldo de Cuentas:
+     • Cuenta CLABE *1234: $15,432.50 MXN
+     • Cuenta CLABE *5678: $8,901.25 MXN
+
+     Total: $24,333.75 MXN
+
+Usuario: ¿Qué tasas de interés tienen para el 2025?
+
+Bot: 📊 Tasas de Interés - 2025:
+
+     • Enero: 4.25%
+     • Febrero: 4.30%
+     • Marzo: 4.35%
+     ...
 ```
 
 ### **3. Comandos Disponibles**
 
-| Comando | Descripción | Ejemplo |
-|---------|-------------|---------|
-| `cualquier mensaje` | Chat con IA | "¿Cuál es mi información?" |
-| `logout` | Cerrar sesión | "logout" |
-| `obtener información` | Info del usuario | "muéstrame mi perfil" |
+| Acción | Ejemplo |
+|--------|---------|
+| Consultar saldo | "¿cuál es mi saldo?" |
+| Ver tasas | "tasas de interés del 2025" |
+| Buscar información | "busca documentos sobre inversiones" |
+| Ver perfil | "muéstrame mi información" |
+| Simular ahorro | "quiero simular un ahorro" |
+| Cerrar sesión | "logout" o "cerrar sesión" |
 
-### **4. Ejemplos de Conversación**
+### **4. WebChat API**
 
+Para integraciones web, el bot expone una API REST:
+
+```javascript
+// Inicializar chat
+POST /api/webchat/init
+Headers: { "Authorization": "Bearer <token>" }
+
+// Enviar mensaje
+POST /api/webchat/ask
+Body: { "message": "¿Cuál es mi saldo?", "token": "<token>" }
+
+// Obtener historial
+GET /api/webchat/history?token=<token>
+
+// Limpiar historial
+POST /api/webchat/clear
+Body: { "token": "<token>" }
 ```
-Usuario: ¿Cuál es mi información?
-Bot: 👤 Información del Usuario:
-     
-     👤 Nombre: Juan Pérez López
-     📧 Usuario: 91004
-     🔑 Token: eyJhbGciOiJIUzI1NiIs...
 
-Usuario: ¿Qué puedes hacer?
-Bot: Puedo ayudarte con:
-     • Consultar tu información de usuario
-     • Responder preguntas generales
-     • Realizar consultas usando tu token
-     • Chatear de forma inteligente
-     
-     ¿En qué te puedo ayudar hoy?
-```
+---
 
 ## 📁 Estructura del Proyecto
 
 ```
 nova-bot/
 ├── 📁 bots/
-│   ├── 📄 dialogBot.js          # Base para manejo de estados
-│   ├── 📄 teamsBot.js           # ⭐ Bot principal con login
-├── 📁 dialogs/
-│   ├── 📄 mainDialog.js         # Diálogo principal (opcional)
-│   └── 📄 logoutDialog.js       # Diálogo de logout (opcional)
+│   ├── 📄 dialogBot.js          # Clase base para manejo de actividades
+│   └── 📄 teamsBot.js           # ⭐ Bot principal (305 líneas)
+├── 📁 cards/
+│   └── 📄 loginCard.js          # Adaptive Card de login
 ├── 📁 services/
-│   ├── 📄 openaiService.js      # ⭐ Servicio OpenAI simplificado
-│   └── 📄 conversationService.js # Servicio de conversaciones
-├── 📁 utilities/
-│   └── 📄 http_utils.js         # Utilidades HTTP
-├── 📄 index.js                  # ⭐ Servidor principal
-├── 📄 package.json              # Dependencias del proyecto
+│   ├── 📄 authService.js        # ⭐ Autenticación y sesiones
+│   ├── 📄 cosmosService.js      # ⭐ Persistencia en Cosmos DB
+│   ├── 📄 openaiService.js      # ⭐ Integración con GPT-4
+│   ├── 📄 toolsService.js       # ⭐ 6 herramientas especializadas
+│   └── 📄 documentService.js    # Búsqueda vectorial
+├── 📁 controllers/
+│   └── 📄 webchatController.js  # API REST para WebChat
+├── 📁 routes/
+│   └── 📄 webchatRoute.js       # Rutas de WebChat
+├── 📁 backend/
+│   ├── 📁 routes/               # Procesamiento de PDF y Word
+│   ├── 📁 services/             # Servicios backend
+│   └── 📁 controllers/          # Configuración
+├── 📄 index.js                  # ⭐ Servidor principal multi-bot
+├── �� package.json              # Dependencias (14 deps principales)
 ├── 📄 .env.example              # Ejemplo de configuración
-├── 📄 .env                      # Configuración (no incluir en git)
+├── 📄 CLAUDE.md                 # Documentación técnica detallada
 └── 📄 README.md                 # Esta documentación
 ```
 
-### **⭐ Archivos Principales**
+### **Archivos Clave (⭐)**
 
-- **`index.js`** - Configuración del servidor y adaptador
-- **`teamsBot.js`** - Lógica principal del bot y autenticación
-- **`openaiService.js`** - Integración con OpenAI GPT-4
+- **`index.js`** (362L) - Servidor Express con soporte multi-bot
+- **`teamsBot.js`** (305L) - Lógica principal: login, logout, conversación
+- **`openaiService.js`** (346L) - Coordinación GPT-4 + herramientas
+- **`toolsService.js`** (435L) - 6 herramientas de consulta
+- **`cosmosService.js`** (15KB) - Persistencia con partition key `/user_id`
+- **`authService.js`** (8.5KB) - Gestión de autenticación
+
+---
 
 ## 🌐 API Endpoints
 
-### **Bot Endpoints**
+### **Bot Endpoints (Teams)**
 
 | Endpoint | Método | Descripción |
 |----------|--------|-------------|
-| `/api/messages` | POST | Recibe mensajes de Teams |
-| `/health` | GET | Estado de salud del bot |
-| `/diagnostic` | GET | Información de diagnóstico |
+| `/api/messages` | POST | Bot principal |
+| `/api/messages/bot` | POST | Bot 2 (opcional) |
+| `/api/messages/bot2` | POST | Bot 3 (opcional) |
 
-### **Endpoint de Salud**
+### **WebChat Endpoints**
 
-```bash
-GET /health
-```
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/api/webchat/init` | GET/POST | Inicializar chat |
+| `/api/webchat/ask` | POST | Enviar mensaje |
+| `/api/webchat/history` | GET | Obtener historial |
+| `/api/webchat/clear` | POST | Limpiar historial |
+| `/api/webchat/status` | GET | Estado de servicios |
 
-**Respuesta:**
-```json
-{
-  "status": "OK",
-  "timestamp": "2024-01-15T10:30:00.000Z",
-  "bot": "Nova Bot Simplificado",
-  "features": {
-    "customLogin": true,
-    "oauth": false,
-    "azure": false,
-    "openai": true
-  }
-}
-```
+### **Información y Salud**
 
-### **Endpoint de Diagnóstico**
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/health` | GET | Estado del servidor |
+| `/api/bots` | GET | Info de todos los bots |
+| `/api/bots/:botId` | GET | Info de un bot específico |
+| `/api/cors-test` | GET | Verificar CORS |
 
-```bash
-GET /diagnostic
-```
+### **Procesamiento de Documentos**
 
-**Respuesta:**
-```json
-{
-  "bot": {
-    "authenticatedUsers": 3,
-    "activeProcesses": 1,
-    "timestamp": "2024-01-15T10:30:00.000Z"
-  },
-  "memory": {
-    "used": "45 MB",
-    "total": "128 MB"
-  },
-  "uptime": "3600 segundos",
-  "environment": {
-    "hasOpenAI": true,
-    "hasBotId": true,
-    "nodeVersion": "v18.17.0"
-  }
-}
-```
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/api/sendPdf` | POST | Procesar y almacenar PDF |
+| `/api/sendWord` | POST | Procesar y almacenar Word (.doc/.docx) |
 
-### **API Externa - Nova Authentication**
-
-```bash
-POST https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login
-Content-Type: application/json
-
-{
-  "cveUsuario": "91004",
-  "password": "Pruebas"
-}
-```
-
-**Respuesta Exitosa:**
-```json
-{
-  "info": [
-    {
-      "EsValido": 0,
-      "Mensaje": "Bienvenido",
-      "Nombre": "Juan Pérez",
-      "Paterno": "López",
-      "Materno": "García",
-      "CveUsuario": "91004",
-      "FechaUltAcceso": null,
-      "HoraUltAcceso": null,
-      "Token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-    }
-  ]
-}
-```
+---
 
 ## 🔧 Desarrollo
 
 ### **Scripts Disponibles**
 
 ```bash
-# Iniciar en desarrollo
+# Desarrollo con hot reload
 npm run dev
 
-# Iniciar en producción
+# Producción
 npm start
 
 # Verificar sintaxis
-npm run lint
-
-# Ejecutar tests
-npm test
-
-# Ver logs en tiempo real
-npm run logs
+npm run check
 ```
 
-### **Estructura de Logs**
+### **Agregar Nuevas Herramientas**
 
-```
-[2024-01-15 10:30:00] [91004] Mensaje recibido: "hola"
-[2024-01-15 10:30:01] [91004] Usuario autenticado: Juan Pérez
-[2024-01-15 10:30:02] 🤖 Enviando request a OpenAI...
-[2024-01-15 10:30:03] ✅ Respuesta de OpenAI recibida
-```
-
-### **Agregar Nuevas Funciones**
-
-Para agregar nuevas herramientas en `openaiService.js`:
+Para agregar una nueva herramienta al bot, edita `services/toolsService.js`:
 
 ```javascript
-// En defineTools()
-{
-    type: "function",
-    function: {
-        name: "nueva_funcion",
-        description: "Descripción de la función",
-        parameters: {
-            type: "object",
-            properties: {
-                parametro: {
-                    type: "string",
-                    description: "Descripción del parámetro"
+// 1. Definir la herramienta
+getToolDefinitions() {
+    return [
+        // ... herramientas existentes
+        {
+            type: 'function',
+            function: {
+                name: 'mi_nueva_herramienta',
+                description: 'Descripción clara de qué hace',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        parametro: {
+                            type: 'string',
+                            description: 'Descripción del parámetro'
+                        }
+                    },
+                    required: ['parametro']
                 }
-            },
-            required: ["parametro"]
+            }
         }
+    ];
+}
+
+// 2. Implementar la función
+async miNuevaHerramienta(parametro, context) {
+    try {
+        // Tu lógica aquí
+        const resultado = await tuAPI(parametro, context.userToken);
+
+        return {
+            resultado: resultado,
+            mensaje: "Operación exitosa"
+        };
+    } catch (error) {
+        return { error: error.message };
     }
 }
 
-// En ejecutarHerramienta()
-case 'nueva_funcion':
-    return await this.nuevaFuncion(parametros.parametro);
+// 3. Agregar al switch en executeTool()
+async executeTool(toolName, params, context) {
+    switch(toolName) {
+        // ... casos existentes
+        case 'mi_nueva_herramienta':
+            return await this.miNuevaHerramienta(params.parametro, context);
+        default:
+            throw new Error(`Herramienta desconocida: ${toolName}`);
+    }
+}
 ```
+
+---
 
 ## ❓ Troubleshooting
 
-### **Problemas Comunes**
+### **Problema: Bot no responde en Teams**
 
-#### **🔴 Bot no responde**
+**Síntomas:** El bot aparece online pero no responde a mensajes
 
-**Síntomas:** El bot no responde a mensajes
-**Soluciones:**
+**Solución:**
 ```bash
-# Verificar configuración
+# 1. Verificar que el servidor está corriendo
 curl http://localhost:3978/health
 
-# Revisar logs
-npm run logs
+# 2. Revisar logs del servidor
+npm run dev
 
-# Verificar variables de entorno
-echo $OPENAI_API_KEY
+# 3. Verificar configuración de Bot Framework
+# Asegúrate que MicrosoftAppId y MicrosoftAppPassword sean correctos
+
+# 4. Verificar endpoint en Azure
+# Messaging endpoint debe apuntar a: https://tu-dominio.com/api/messages
 ```
 
-#### **🔴 Error de autenticación**
+### **Problema: Error de autenticación**
 
-**Síntomas:** "Error del servidor" al hacer login
-**Soluciones:**
-1. Verificar conectividad a Nova API
-2. Validar credenciales de prueba
-3. Revisar logs del servidor
+**Síntomas:** "Error al autenticar" o "Credenciales inválidas"
 
+**Solución:**
 ```bash
-# Test manual de la API
+# 1. Verificar conectividad a API Nova
 curl -X POST https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login \
   -H "Content-Type: application/json" \
-  -d '{"cveUsuario":"91004","password":"Pruebas"}'
+  -d '{"cveUsuario":"usuario","password":"password"}'
+
+# 2. Verificar que Cosmos DB está disponible
+# Revisa COSMOS_DB_ENDPOINT y COSMOS_DB_KEY en .env
+
+# 3. Revisar logs de autenticación
+# Busca líneas con "🔐" en la consola
 ```
 
-#### **🔴 OpenAI no funciona**
+### **Problema: OpenAI no responde**
 
-**Síntomas:** "Servicio OpenAI no disponible"
-**Soluciones:**
-1. Verificar API Key válida
-2. Comprobar cuota de OpenAI
-3. Revisar conexión a internet
+**Síntomas:** "Error procesando con IA" o timeout
 
+**Solución:**
 ```bash
-# Test manual de OpenAI
+# 1. Verificar API Key
 curl https://api.openai.com/v1/models \
   -H "Authorization: Bearer $OPENAI_API_KEY"
+
+# 2. Verificar cuota de OpenAI
+# https://platform.openai.com/account/usage
+
+# 3. Verificar endpoint de Azure OpenAI (si aplica)
+# OPENAI_ENDPOINT debe incluir https:// y el dominio completo
 ```
 
-### **Logs de Debugging**
+### **Problema: Cosmos DB no guarda mensajes**
 
-**Habilitar logs detallados:**
+**Síntomas:** Historial se pierde al reiniciar o no se guarda
+
+**Solución:**
 ```bash
-NODE_ENV=development npm start
-```
+# 1. Verificar configuración de Cosmos DB
+echo $COSMOS_DB_ENDPOINT
+echo $COSMOS_DB_DATABASE_ID
+echo $COSMOS_DB_CONTAINER_ID
 
-**Ubicación de logs:**
-- Consola del servidor
-- Azure Application Insights (si configurado)
+# 2. Verificar que el contenedor existe
+# Portal Azure → Cosmos DB → Data Explorer
 
-### **Reinicio de Emergencia**
+# 3. Verificar partition key
+# Debe ser: /user_id
 
-```bash
-# Limpiar todo y reiniciar
-npm run clean
-npm install
-npm start
-
-# Verificar estado
-curl http://localhost:3978/diagnostic
-```
-
-## 📊 Ejemplos
-
-### **Ejemplo 1: Login Completo**
-
-```
-Usuario: (inicia conversación)
-
-Bot: 👋 Bienvenido a Nova Bot
-     [Muestra tarjeta de login]
-
-Usuario: [Completa: usuario="91004", password="Pruebas"]
-
-Bot: ✅ ¡Bienvenido, Juan Pérez!
-     🎉 Login exitoso
-     👤 Usuario: 91004
-     🔑 Token: eyJhbGci...
-     💬 Ya puedes usar todas las funciones del bot.
-```
-
-### **Ejemplo 2: Consulta de Información**
-
-```
-Usuario: "¿cuál es mi información completa?"
-
-Bot: 📊 Información del Usuario:
-     
-     👤 Nombre: Juan Pérez López
-     📧 Usuario: 91004
-     🏢 Apellido Paterno: López
-     🏢 Apellido Materno: García
-     🔑 Token: eyJhbGci... (activo)
-     
-     ¿Necesitas algo más?
-```
-
-### **Ejemplo 3: Chat Inteligente**
-
-```
-Usuario: "explícame qué es un JWT token"
-
-Bot: 🔐 Un JWT (JSON Web Token) es un estándar para transmitir 
-     información de manera segura entre partes.
-     
-     **Características:**
-     • Contiene 3 partes: header.payload.signature
-     • Se puede verificar y confiar
-     • Es compacto y autocontenido
-     
-     **Tu token actual contiene:**
-     • Tu usuario (91004)
-     • Información de sesión
-     • Fecha de expiración
-     
-     ¿Te gustaría saber algo específico sobre tokens?
-```
-
-### **Ejemplo 4: Logout**
-
-```
-Usuario: "logout"
-
-Bot: ✅ Sesión cerrada exitosamente
-     
-     Hasta luego. Para volver a usar el bot, 
-     necesitarás autenticarte nuevamente.
-     
-     [Muestra nueva tarjeta de login]
+# 4. Revisar logs
+# Busca líneas con "💾" en la consola
 ```
 
 ---
 
-## 📞 Soporte
+## 📞 Información del Proyecto
 
-### **Información del Proyecto**
-- **Versión:** 2.0.0 (Simplificada)
-- **Autor:** Equipo de Desarrollo
-- **Tecnologías:** Node.js, Bot Framework, OpenAI, Teams
+**Versión:** 4.0.0
+**Plataforma:** Node.js 18+
+**Licencia:** ISC
+
+### **Tecnologías Utilizadas**
+
+- **Backend:** Node.js + Express
+- **Bot Framework:** Microsoft Bot Builder SDK
+- **IA:** OpenAI GPT-4 (gpt-4-turbo-mini)
+- **Persistencia:** Azure Cosmos DB
+- **Búsqueda:** Azure Cognitive Search
+- **Embeddings:** text-embedding-3-large (1024 dimensiones)
 
 ### **Recursos Útiles**
+
 - [Bot Framework Documentation](https://docs.microsoft.com/en-us/azure/bot-service/)
 - [OpenAI API Documentation](https://platform.openai.com/docs)
+- [Azure Cosmos DB Documentation](https://docs.microsoft.com/en-us/azure/cosmos-db/)
 - [Microsoft Teams Platform](https://docs.microsoft.com/en-us/microsoftteams/platform/)
 
-### **Contacto**
-Para soporte técnico o reportar bugs, contacta al equipo de desarrollo.
+### **Documentación Técnica**
+
+Para documentación técnica detallada sobre la arquitectura interna, patrones de diseño y guías de desarrollo, consulta [CLAUDE.md](CLAUDE.md).
 
 ---
 
-**🚀 Nova Bot - Versión 2.0.0 Simplificada**
-*Sistema de autenticación personalizado con OpenAI GPT-4*
+**🚀 Nova Bot - Sistema de Chatbot Corporativo**
+*Impulsado por OpenAI GPT-4 y Azure Cloud Services*
