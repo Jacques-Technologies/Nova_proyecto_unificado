@@ -13,7 +13,7 @@ const ai = new AzureOpenAIService();
 
 /** Configuración */
 const BOT_NAME = 'Asistente Nova';
-const INITIAL_MESSAGE = '¡Hola! Soy tu asistente de Nova Corporation. ¿En qué te puedo ayudar hoy?';
+const INITIAL_MESSAGE = '¡Hola! Soy tu asistente NovaBot. ¿En qué te puedo ayudar hoy?';
 const LANGUAGE = 'es';
 const MAX_HISTORY_MESSAGES = 10;
 
