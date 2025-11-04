@@ -264,21 +264,10 @@ export default class ToolsService {
       data: { NumSocio: cveUsuario }
     };
 
-    console.log(`🔍 [consultarSaldo] Request para usuario: ${cveUsuario}`);
-
     const url = process.env.NOVA_API_URL_SALDO ||
       'https://pruebas.nova.com.mx/ApiRestNova/api/SaldoProducto/obtSaldoProducto';
 
     const result = await this._callNovaAPI(url, requestBody, userToken, 'consultar saldo');
-
-    console.log(`📦 [consultarSaldo] API Response:`, {
-      success: result.success,
-      hasData: !!result.data,
-      dataType: typeof result.data,
-      dataKeys: result.data ? Object.keys(result.data) : [],
-      status: result.status,
-      error: result.error
-    });
 
     if (!result.success) {
       console.log(`❌ [consultarSaldo] Error de API: ${result.error}`);
@@ -286,12 +275,7 @@ export default class ToolsService {
     }
 
     if (result.data) {
-      // Log de estructura de datos antes de formatear
-      console.log(`🔧 [consultarSaldo] Datos recibidos:`, JSON.stringify(result.data, null, 2).substring(0, 500));
-
-      const formatted = this.formatearSaldo(result.data, userInfo);
-      console.log(`✅ [consultarSaldo] Respuesta formateada (${formatted.length} chars):`, formatted.substring(0, 200));
-      return formatted;
+      return this.formatearSaldo(result.data, userInfo);
     }
 
     console.log(`⚠️ [consultarSaldo] Sin datos en respuesta`);
@@ -403,16 +387,6 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
    * @returns {string} Datos RAW estructurados para que la IA interprete
    */
   formatearSaldo(saldoData, userInfo) {
-    console.log('📋 [formatearSaldo] Iniciando formateo...');
-    console.log('📋 [formatearSaldo] Estructura recibida:', {
-      hasData: !!saldoData,
-      dataType: typeof saldoData,
-      keys: saldoData ? Object.keys(saldoData) : [],
-      hasSaldoAhorro: !!saldoData?.saldoAhorro,
-      hasSaldoPrestamo: !!saldoData?.saldoPrestamo,
-      status: saldoData?.status
-    });
-
     // Verificar que tengamos datos
     if (!saldoData || typeof saldoData !== 'object') {
       console.log('❌ [formatearSaldo] Sin datos válidos');
@@ -424,13 +398,6 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
     const prestamos = saldoData.saldoPrestamo?.info || [];
     const hasAhorros = Array.isArray(ahorros) && ahorros.length > 0;
     const hasPrestamos = Array.isArray(prestamos) && prestamos.length > 0;
-
-    console.log('📋 [formatearSaldo] Datos extraídos:', {
-      ahorrosCount: ahorros.length,
-      prestamosCount: prestamos.length,
-      hasAhorros,
-      hasPrestamos
-    });
 
     // Si no hay datos de ninguno de los dos
     if (!hasAhorros && !hasPrestamos) {
@@ -488,9 +455,6 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
     output += '   - Saldos negativos en ahorros pueden indicar ajustes o sobregiros\n';
     output += '   - InteresProyectado NULL significa que no aplica interés para ese producto\n';
     output += '   - Respeta los nombres exactos de productos tal como vienen de la API';
-
-    console.log(`✅ [formatearSaldo] Formateo completado: ${output.length} caracteres`);
-    console.log(`📊 [formatearSaldo] Resumen: ${ahorros.length} ahorros, ${prestamos.length} préstamos`);
 
     return output;
   }
