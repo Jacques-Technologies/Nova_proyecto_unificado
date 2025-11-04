@@ -10,12 +10,6 @@ import {
 } from 'botbuilder';
 
 import TeamsBot from './bots/teamsBot.js';
-import CosmosService from './services/cosmosService.js';
-import AzureOpenAIService from './services/openaiService.js';
-
-// Inicialización de servicios
-const cosmosService = new CosmosService();
-const openaiService = new AzureOpenAIService();
 
 // ✅ CONFIGURACIÓN MULTI-BOT
 const BOT_CONFIGS = [
@@ -229,7 +223,7 @@ async function startServer() {
   });
 
   // ✅ Ruta raíz con información del servidor
-app.get('/', (req, res) => {
+  app.get('/', (req, res) => {
   res.json({
     message: 'Nova Multi-Bot Server',
     version: '1.0.0',
