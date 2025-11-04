@@ -65,7 +65,7 @@ Usuario (Teams/WebChat) → index.js (CloudAdapter) → TeamsBot v4.0
                                                       │  ├→ text-embedding-3-large
                                                       │  └→ Coordina → Tools Service
                                                       └→ Tools Service v3.1
-                                                         ├→ 5 herramientas
+                                                         ├→ 6 herramientas
                                                          ├→ Formateo de resultados
                                                          └→ Llamadas API Nova
 ```
