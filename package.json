@@ -1,48 +1,40 @@
 {
   "name": "novabot",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "type": "module",
-  "description": "Bot de Teams",
+  "description": "Nova Bot v4.0 - Sistema de chatbot corporativo multi-bot para Microsoft Teams y WebChat",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "prod": "node index.js"
+    "check": "node --check index.js"
   },
-  "keywords": [],
+  "keywords": [
+    "bot",
+    "teams",
+    "chatbot",
+    "openai",
+    "azure"
+  ],
   "author": "Nova",
   "license": "ISC",
   "dependencies": {
     "@azure/cosmos": "^3.17.3",
     "@azure/search-documents": "^11.3.1",
-    "botbuilder-teams" : "latest",
     "axios": "^1.4.0",
     "botbuilder": "^4.19.3",
-    "botbuilder-dialogs": "^4.19.3",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
-    "cors": "^2.8.5",
-    "multer": "^1.4.5-lts.1",
-    "mammoth": "^1.8.0",
-    "pdf.js-extract": "^0.2.1",
-    "word-extractor": "^1.0.4",
-    "winston": "^3.17.0",
-    "socket.io": "^4.8.1",
-    "https": "^1.0.0",
     "luxon": "^3.3.0",
+    "mammoth": "^1.8.0",
+    "multer": "^1.4.5-lts.1",
     "openai": "^4.7.1",
-    "uuid": "^9.0.0",
-    "botbuilder-azure": "^4.19.3"
+    "pdf.js-extract": "^0.2.1",
+    "winston": "^3.17.0",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
-    "esbuild": "^0.18.17",
-    "eslint": "^8.45.0",
-    "eslint-config-standard": "^17.1.0",
-    "eslint-plugin-import": "^2.27.5",
-    "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-promise": "^6.1.1",
-    "jest": "^29.6.1",
     "nodemon": "^3.0.1"
   }
 }

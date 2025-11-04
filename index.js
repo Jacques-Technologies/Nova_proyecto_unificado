@@ -224,38 +224,38 @@ async function startServer() {
 
   // ✅ Ruta raíz con información del servidor
   app.get('/', (req, res) => {
-  res.json({
-    message: 'Nova Multi-Bot Server',
-    version: '1.0.0',
-    status: 'running',
-    timestamp: new Date().toISOString(),
-    activeBots: activeBots.length,
-    totalConfigurations: BOT_CONFIGS.length,
-    endpoints: {
-      bots: activeBots.map(bot => ({
-        name: bot.config.name,
-        endpoint: bot.config.endpoint
-      })),
-      documents: [
-        'POST /api/sendPdf',
-        'POST /api/sendWord'
-      ],
-      webchat: [
-        'GET/POST /api/webchat/init',
-        'POST /api/webchat/ask',
-        'GET /api/webchat/history',
-        'POST /api/webchat/clear',
-        'GET /api/webchat/status'
-      ],
-      info: [
-        'GET /api/bots',
-        'GET /api/bots/:botId',
-        'GET /api/cors-test',
-        'GET /health'
-      ]
-    }
+    res.json({
+      message: 'Nova Multi-Bot Server',
+      version: '1.0.0',
+      status: 'running',
+      timestamp: new Date().toISOString(),
+      activeBots: activeBots.length,
+      totalConfigurations: BOT_CONFIGS.length,
+      endpoints: {
+        bots: activeBots.map(bot => ({
+          name: bot.config.name,
+          endpoint: bot.config.endpoint
+        })),
+        documents: [
+          'POST /api/sendPdf',
+          'POST /api/sendWord'
+        ],
+        webchat: [
+          'GET/POST /api/webchat/init',
+          'POST /api/webchat/ask',
+          'GET /api/webchat/history',
+          'POST /api/webchat/clear',
+          'GET /api/webchat/status'
+        ],
+        info: [
+          'GET /api/bots',
+          'GET /api/bots/:botId',
+          'GET /api/cors-test',
+          'GET /health'
+        ]
+      }
+    });
   });
-});
 
 // ✅ Manejar peticiones HEAD para la raíz (healthcheck común)
 app.head('/', (req, res) => {
