@@ -35,3 +35,6 @@ dist/
 CLAUDE.md
 MIGRACION_V3_COMPLETADA.md
 MIGRACION_V4_COMPLETADA.md
+
+# Carpeta de pruebas locales
+pruebas/

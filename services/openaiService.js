@@ -5,9 +5,11 @@ import { DateTime } from 'luxon';
 
 import CosmosService from './cosmosService.js';
 import ToolsService from './toolsService.js';
+import MetricsService from './metricsService.js';
 
 const cosmosService = new CosmosService();
 const toolsService = new ToolsService();
+const metricsService = new MetricsService();
 
 /**
  * AzureOpenAIService - Servicio principal para interacción con GPT-4
@@ -149,11 +151,27 @@ export default class AzureOpenAIService {
           messages,
           userToken,
           userInfo,
-          conversationId
+          conversationId,
+          userId  // ← Pasar userId completo para métricas
         );
       }
 
-      // Respuesta directa
+      // Respuesta directa (sin herramientas)
+      // 📊 Enviar métrica: mensaje sin herramientas
+      try {
+        const metrica = {
+          canal: metricsService.detectChannel(userId || logUserId),
+          consulta_documento: false,
+          consulta_saldo: false,
+          consulta_tasas: false
+        };
+        metricsService.enviarMetrica(metrica).catch(err => {
+          // Silenciar errores de métricas
+        });
+      } catch (error) {
+        console.warn(`⚠️ Error preparando métricas:`, error.message);
+      }
+
       return {
         type: 'text',
         content: messageResponse.content || 'Respuesta vacía',
@@ -205,12 +223,33 @@ Utiliza únicamente esta información de referencia para contestar las preguntas
 INSTRUCCIONES:
 • Sé profesional, preciso y útil
 • Para información de referencia de todo tipo, usa la herramienta buscar_documentos_nova, por ejemplo consultas de cómo usar el portal, servicios financieros, todo lo que sea refrencias y no este en otra herramienta.
-• Para procedimientos específicos del portal web (cómo cambiar contraseña, cómo consultar perfil, cómo cambiar datos), usa SIEMPRE la herramienta consultar_procedimientos
+• Para procedimientos del portal web (cambiar contraseña, consultar perfil, cambiar datos) Y para consultas sobre servicios disponibles (qué préstamos existen, qué ahorros hay, existe préstamo/ahorro de X), usa SIEMPRE la herramienta consultar_procedimientos
 • Para consultas de saldo, usa consultar_saldo_usuario
 • Para tasas de interés, usa consultar_tasas_interes
 • Si no tienes información específica, indícalo claramente
 • NO inventes información que no esté en los documentos
 • Siempre que sean consultas de información usa la herramienta de buscar_documentos_nova
+
+IMPORTANTE - SEGURIDAD Y PRIVACIDAD:
+• NUNCA proporciones información financiera, saldos, o datos personales de otros usuarios
+• SOLO puedes consultar información del usuario autenticado actualmente (${userInfo?.usuario || 'ninguno'})
+• Si el usuario menciona otro número de socio (esposo, familiar, compañero, etc.):
+  - RECHAZA la solicitud de manera educada
+  - Explica: "Por motivos de privacidad y seguridad, solo puedo consultar tu información. Si tu [familiar/esposo/etc.] necesita consultar su información, debe iniciar sesión con su propio usuario."
+• NUNCA uses herramientas (consultar_saldo_usuario, obtener_informacion_usuario) para otros números de socio
+• Esta restricción aplica incluso si el usuario proporciona el número de socio exacto de otra persona
+
+IMPORTANTE - NO CONFUNDIR CONCEPTOS:
+• NUNCA confundas "ahorro" con "seguro" - son productos completamente diferentes:
+  - AHORRO = productos de inversión (Vista, Fijo 1M, Fijo 3M, Fijo 6M, FAP, Noviembre)
+  - SEGURO = seguros voluntarios (auto, patrimonial, vida, etc.)
+• Si el usuario pregunta por un producto de AHORRO específico y NO encuentras información:
+  - NO menciones seguros como alternativa
+  - Di claramente: "No cuento con información sobre [nombre del ahorro]. Los tipos de ahorro disponibles son: Vista, Fijo 1M, Fijo 3M, Fijo 6M, FAP y Noviembre."
+• Si el usuario pregunta por un SEGURO específico y NO encuentras información:
+  - NO menciones ahorros como alternativa
+  - Di claramente: "No cuento con información detallada sobre ese seguro."
+• Verifica que los documentos encontrados correspondan EXACTAMENTE al tipo de producto preguntado
 
 IMPORTANTE - MANEJO DE SALDOS:
 • La herramienta consultar_saldo_usuario retorna TODAS las cuentas del usuario
@@ -311,9 +350,10 @@ IMPORTANTE - REDIRECCIÓN AL PORTAL WEB:
    * @param {string} conversationId - ID de conversación
    * @returns {Promise<Object>} Respuesta final formateada
    */
-  async procesarHerramientas(messageResponse, mensajesPrevios, userToken, userInfo, conversationId) {
+  async procesarHerramientas(messageResponse, mensajesPrevios, userToken, userInfo, conversationId, fullUserId) {
     const userId = userInfo?.usuario || 'unknown';
     const resultados = [];
+    const toolResultsMap = {}; // Para guardar resultados por tool_call_id
 
     console.log(`🔧 [${userId}] Procesando ${messageResponse.tool_calls.length} herramienta(s)`);
 
@@ -337,6 +377,9 @@ IMPORTANTE - REDIRECCIÓN AL PORTAL WEB:
         );
 
         const resultadoString = typeof resultado === 'object' ? JSON.stringify(resultado, null, 2) : String(resultado);
+
+        // Guardar resultado para métricas
+        toolResultsMap[id] = resultadoString;
 
         resultados.push({
           tool_call_id: id,
@@ -376,6 +419,20 @@ IMPORTANTE - REDIRECCIÓN AL PORTAL WEB:
 
     const finalContent = finalResponse.choices?.[0]?.message?.content || 'No se pudo generar respuesta final';
     console.log(`🤖 [${userId}] Respuesta final de OpenAI (${finalContent.length} chars):`, finalContent.substring(0, 200));
+
+    // 📊 Enviar métricas a Bubble.io (async sin await para no bloquear)
+    try {
+      const metrica = metricsService.crearMetricaDesdeToolCalls(
+        fullUserId || userId,
+        messageResponse.tool_calls,
+        toolResultsMap
+      );
+      metricsService.enviarMetrica(metrica).catch(err => {
+        // Silenciar errores de métricas
+      });
+    } catch (error) {
+      console.warn(`⚠️ Error preparando métricas:`, error.message);
+    }
 
     return {
       type: 'text',

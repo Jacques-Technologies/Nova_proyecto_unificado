@@ -23,6 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ✅ **Código ultra-limpio** y mantenible
 - ✅ **Stateless puro** (escala horizontalmente sin límites)
 - ✅ **Anti-simulación** (previene cálculos manuales, redirige a portal web)
+- ✅ **Métricas a Bubble.io** (tracking automático de uso)
 
 **Evolución del proyecto:**
 - v2.0: 2,500 líneas (arquitectura original)
@@ -63,11 +64,14 @@ Usuario (Teams/WebChat) → index.js (CloudAdapter) → TeamsBot v4.0
                                                       ├→ OpenAI Service v3.1
                                                       │  ├→ GPT-4.1-mini (chat)
                                                       │  ├→ text-embedding-3-large
-                                                      │  └→ Coordina → Tools Service
-                                                      └→ Tools Service v3.1
-                                                         ├→ 6 herramientas
-                                                         ├→ Formateo de resultados
-                                                         └→ Llamadas API Nova
+                                                      │  ├→ Coordina → Tools Service
+                                                      │  └→ Envía → Metrics Service
+                                                      ├→ Tools Service v3.1
+                                                      │  ├→ 6 herramientas
+                                                      │  ├→ Formateo de resultados
+                                                      │  └→ Llamadas API Nova
+                                                      └→ Metrics Service v1.0
+                                                         └→ POST → Bubble.io
 ```
 
 ### Sistema Multi-Bot
@@ -375,6 +379,31 @@ isAvailable()
 3. Si `tool_calls` → `procesarHerramientas()` - Ejecuta herramientas
 4. Retorna respuesta final
 
+**System Prompt - Protecciones de Seguridad:**
+
+El prompt del sistema incluye múltiples capas de protección:
+
+1. **Privacidad y Seguridad (CRÍTICO):**
+   - ✅ NUNCA da información de otros usuarios
+   - ✅ SOLO consulta datos del usuario autenticado (`${userInfo?.usuario}`)
+   - ✅ Rechaza consultas sobre familiares/compañeros aunque tengan número de socio
+   - ✅ Mensaje de rechazo: "Por motivos de privacidad y seguridad, solo puedo consultar tu información. Si tu [familiar] necesita consultar, debe iniciar sesión con su propio usuario."
+
+2. **Anti-Confusión de Conceptos:**
+   - ✅ Nunca confunde "ahorro" con "seguro"
+   - ✅ Lista productos disponibles cuando no encuentra el específico
+   - ✅ Verifica que documentos correspondan al tipo correcto
+
+3. **Anti-Simulación:**
+   - ✅ NUNCA calcula simulaciones de inversión
+   - ✅ Siempre redirige al simulador oficial del portal
+   - ✅ Previene errores de cálculo y cumple normativas
+
+4. **Clarificación de Intenciones:**
+   - ✅ Detecta palabras técnicas ambiguas ("tasas", "saldo")
+   - ✅ Pregunta antes de ejecutar herramientas con contexto insuficiente
+   - ✅ Excepciona saludos y cortesía (responde naturalmente)
+
 ---
 
 ### **services/toolsService.js (435L)** - Herramientas del Bot
@@ -398,6 +427,34 @@ isAvailable()
 - ✅ El bot NUNCA realiza cálculos de inversión/ahorro por su cuenta
 - ✅ Siempre redirige al simulador oficial del portal web
 - ✅ Esto garantiza exactitud y cumplimiento regulatorio
+
+---
+
+### **services/metricsService.js (180L)** - Métricas a Bubble.io
+
+**Envío automático de métricas de uso** después de cada respuesta.
+
+**Herramientas trackeadas:**
+- `buscar_documentos_nova` + `consultar_procedimientos` → `consulta documento?`
+- `consultar_saldo_usuario` → `consulta saldo?`
+- `consultar_tasas_interes` → `consulta tasas?`
+
+**Extracción de títulos:** Regex `/Nombre del documento:\s*(.+?)(?:\n|$)/g`
+
+**Estructura enviada:**
+```javascript
+{
+  canal: "Teams" | "WebChat",
+  "consulta documento?": true | false,
+  "consulta saldo?": true | false,
+  "consulta tasas?": true | false,
+  documentos: ["título1", "título2"]  // opcional, solo si hay docs
+}
+```
+
+**Variables de entorno (opcionales):**
+- `BUBBLE_METRICS_URL` - Endpoint de Bubble.io
+- `BUBBLE_API_KEY` - Bearer token
 
 ---
 
@@ -583,6 +640,53 @@ Ejecuta: consultar_tasas_interes(2025)
 - ✅ Uso eficiente de herramientas
 - ✅ Usuario se siente comprendido
 
+### Protección de Privacidad (CRÍTICO)
+
+**Problema:** Usuario podría intentar consultar información de otros usuarios (familiares, compañeros)
+
+**Solución v4.0:**
+
+**1. Instrucciones explícitas en system prompt:**
+```javascript
+// En openaiService.js - prepararMensajes()
+IMPORTANTE - SEGURIDAD Y PRIVACIDAD:
+• NUNCA proporciones información financiera, saldos, o datos personales de otros usuarios
+• SOLO puedes consultar información del usuario autenticado actualmente (${userInfo?.usuario})
+• Si el usuario menciona otro número de socio (esposo, familiar, compañero):
+  - RECHAZA la solicitud de manera educada
+  - Explica: "Por motivos de privacidad y seguridad, solo puedo consultar tu información..."
+```
+
+**Flujo de protección:**
+```
+Usuario (999999 - María): "Mi esposo tiene número de socio 418097, ¿qué beneficios tiene?"
+    ↓
+OpenAI detecta: solicitud de información de OTRO usuario (418097 ≠ 999999)
+    ↓
+Bot RECHAZA sin ejecutar herramientas
+    ↓
+Responde: "Por motivos de privacidad y seguridad, solo puedo consultar tu
+información. Si tu esposo necesita consultar sus beneficios, debe iniciar
+sesión con su propio usuario (418097)."
+    ↓
+❌ NO ejecuta consultar_saldo_usuario(418097)
+❌ NO ejecuta obtener_informacion_usuario(418097)
+✅ Protege la privacidad del otro usuario
+```
+
+**Casos cubiertos:**
+- ❌ "Mi esposo/esposa con socio X..."
+- ❌ "Mi familiar con número Y..."
+- ❌ "Mi compañero Z tiene..."
+- ❌ "Consulta el saldo del socio W..."
+- ✅ Solo responde con información genérica de servicios (no datos personales/financieros)
+
+**Beneficios:**
+- ✅ Cumplimiento de privacidad de datos
+- ✅ Protección contra ingeniería social
+- ✅ Previene accesos no autorizados
+- ✅ Experiencia profesional y segura
+
 ---
 
 ## 🛠️ Patterns y Convenciones
@@ -657,6 +761,62 @@ El sistema mantiene logs esenciales para monitoreo:
 console.log('Activity:', JSON.stringify(context.activity, null, 2));
 console.log('Value:', context.activity.value);
 ```
+
+---
+
+## 🧪 Carpeta de Pruebas
+
+### Ubicación: `/pruebas`
+
+Carpeta local para testing y debugging, **excluida de Git, deployments y entregas**.
+
+### Script principal: `buscar-vectorial.js`
+
+Simula exactamente la búsqueda vectorial que hace el bot.
+
+**Uso:**
+```bash
+# 1. Editar pruebas/buscar-vectorial.js
+const CONSULTA = 'tu búsqueda aquí';  // ← Modificar
+const PERFIL = '1';                    // ← Perfil a filtrar
+
+# 2. Ejecutar
+node pruebas/buscar-vectorial.js
+```
+
+**Qué hace:**
+- ✅ Genera embedding con OpenAI (text-embedding-3-large)
+- ✅ Busca en Azure Search con búsqueda vectorial
+- ✅ Filtra por perfil
+- ✅ Muestra chunks ordenados por relevancia (score)
+- ✅ Análisis de palabras clave
+
+**Casos de uso:**
+
+1. **Investigar respuestas inesperadas del bot:**
+   ```javascript
+   // El bot respondió algo raro sobre "ahorro patrimonial"
+   const CONSULTA = 'ahorro patrimonial';
+   // Ver qué chunks encuentra y por qué
+   ```
+
+2. **Verificar contenido indexado:**
+   ```javascript
+   const CONSULTA = 'tipos de préstamo';
+   // Ver toda la información disponible sobre préstamos
+   ```
+
+3. **Validar perfiles:**
+   ```javascript
+   const CONSULTA = 'procedimientos';
+   const PERFIL = '3';  // Probar con diferentes perfiles
+   ```
+
+**Credenciales de prueba** (en `/pruebas/.env`):
+- Usuario: `999999`
+- Contraseña: `PruebasPortalN0v4`
+
+**Ver:** [pruebas/README.md](pruebas/README.md) para más detalles
 
 ---
 
