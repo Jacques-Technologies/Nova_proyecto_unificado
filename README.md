@@ -38,6 +38,7 @@
   - Simulador de ahorros (redirige a portal web)
 - 🔒 **Sistema Anti-Simulación** - Previene cálculos manuales, redirige a herramientas oficiales
 - 💡 **Clarificación Inteligente** - Detecta intenciones ambiguas y solicita aclaración
+- 📊 **Métricas a Bubble.io** - Envío automático de estadísticas de uso (canal, herramientas usadas)
 - 📱 **Multi-Plataforma** - Soporte para Microsoft Teams y WebChat
 - 🔄 **Multi-Bot** - Configuración para múltiples bots simultáneos
 - ⚡ **Stateless** - Arquitectura sin estado en memoria, 100% escalable
@@ -154,6 +155,12 @@ AZURE_SEARCH_API_KEY=tu-search-key-aqui
 AZURE_SEARCH_INDEX_NAME=nova-documents
 
 # =============================================================================
+# BUBBLE.IO MÉTRICAS - OPCIONAL
+# =============================================================================
+BUBBLE_METRICS_URL=https://nova-79590.bubbleapps.io/api/1.1/wf/recepcion-respuesta
+BUBBLE_API_KEY=11a0084bcc81e005a839a015b24b6e39
+
+# =============================================================================
 # CONFIGURACIÓN DEL SERVIDOR
 # =============================================================================
 PORT=3978
@@ -250,7 +257,7 @@ Para integraciones web, el bot expone una API REST:
 POST /api/webchat/init
 Body: {
   "token": "<token>",
-  "perfil": "<perfil>" // opcional
+  "perfil": "<perfil>" // opcional (case-insensitive: perfil, Perfil, PERFIL)
 }
 
 // Enviar mensaje
@@ -258,9 +265,9 @@ POST /api/webchat/ask
 Body: {
   "token": "<token>",
   "content": "¿Cuál es mi saldo?",
-  "perfil": "<perfil>", // opcional
-  "CveUsuario": "<usuario>", // opcional
-  "NumRI": "<numRI>" // opcional
+  "perfil": "<perfil>",        // opcional (case-insensitive: perfil, Perfil)
+  "CveUsuario": "<usuario>",   // importante (case-insensitive: CveUsuario, cveUsuario)
+  "NumRI": "<numRI>"           // opcional (case-insensitive: NumRI, numRi, numri)
 }
 
 // Obtener historial

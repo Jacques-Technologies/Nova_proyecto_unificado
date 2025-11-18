@@ -20,7 +20,7 @@ const documentService = new DocumentService();
  * - consultar_tasas_interes: Tasas de interés Nova
  * - consultar_saldo_usuario: Saldos de TODAS las cuentas (la IA filtra según pregunta)
  * - buscar_documentos_nova: Búsqueda en Azure Search (vectorial + textual)
- * - consultar_procedimientos: Búsqueda especializada en procedimientos del portal web (señuelo)
+ * - consultar_procedimientos: Búsqueda en procedimientos del portal, servicios disponibles e información general de Nova (señuelo)
  * - simulador_ahorros: Redirige al usuario al simulador del portal web
  */
 export default class ToolsService {
@@ -56,16 +56,16 @@ export default class ToolsService {
         type: 'function',
         function: {
           name: 'consultar_procedimientos',
-          description: 'Consulta procedimientos específicos del portal web de Nova. USA ESTA HERRAMIENTA cuando el usuario pregunte sobre: cómo consultar su perfil, cómo cambiar su contraseña, cómo cambiar sus datos personales, cómo navegar el portal, cómo usar funcionalidades del sistema.',
+          description: 'Consulta procedimientos del portal web de Nova Y consulta de servicios disponibles. USA ESTA HERRAMIENTA cuando el usuario pregunte sobre: (1) Procedimientos: cómo consultar su perfil, cómo cambiar su contraseña, cómo cambiar datos personales, cómo navegar el portal, cómo usar funcionalidades del sistema. (2) Servicios disponibles: qué tipos de préstamos existen, qué tipos de ahorros hay disponibles, cuáles son los servicios de Nova, existe préstamo/ahorro de X, información general sobre productos. (3) Información general sobre Nova: historia de Nova, misión y valores, trayectoria de la empresa, quiénes somos, contexto institucional.',
           parameters: {
             type: 'object',
             properties: {
-              procedimiento: {
+              consulta: {
                 type: 'string',
-                description: 'Procedimiento a consultar (ej: "cambiar contraseña", "consultar perfil", "cambiar datos")'
+                description: 'Procedimiento, servicio o información a consultar (ej: "cambiar contraseña", "tipos de préstamos", "existe préstamo de casa", "qué ahorros hay", "historia de Nova", "quiénes son")'
               }
             },
-            required: ['procedimiento']
+            required: ['consulta']
           }
         }
       },
@@ -174,7 +174,8 @@ export default class ToolsService {
 
       case 'consultar_procedimientos':
         // Herramienta señuelo: reutiliza buscar_documentos_nova internamente
-        return await this.buscarDocumentosNova(params.procedimiento, userInfo, userToken);
+        // Ahora captura también consultas sobre servicios disponibles (préstamos, ahorros)
+        return await this.buscarDocumentosNova(params.consulta, userInfo, userToken);
 
       case 'simulador_ahorros':
         return this.redirigirSimulador(params.tipo_simulacion);
@@ -200,7 +201,8 @@ export default class ToolsService {
 
     let info = 'Información del usuario:\n';
     if (userInfo.nombre) info += `- Nombre: ${userInfo.nombre}\n`;
-    if (userInfo.usuario) info += `- Usuario/Socio: ${userInfo.usuario}\n`;
+    const numeroSocio = userInfo.CveUsuario || userInfo.usuario;
+    if (numeroSocio) info += `- Usuario/Socio: ${numeroSocio}\n`;
     if (userInfo.paterno) info += `- Apellido paterno: ${userInfo.paterno}\n`;
     if (userInfo.materno) info += `- Apellido materno: ${userInfo.materno}\n`;
 
@@ -222,7 +224,7 @@ export default class ToolsService {
       return 'Error: Autenticación requerida para consultar tasas de interés';
     }
 
-    const cveUsuario = userInfo.usuario;
+    const cveUsuario = userInfo.CveUsuario || userInfo.usuario;
     const numRI = this.extractNumRIFromToken(userToken) || '7';
 
     const requestBody = {
@@ -258,7 +260,7 @@ export default class ToolsService {
       return 'Error: Autenticación requerida para consultar saldo';
     }
 
-    const cveUsuario = userInfo.usuario;
+    const cveUsuario = userInfo.CveUsuario || userInfo.usuario;
     const requestBody = {
       usuarioActual: { CveUsuario: cveUsuario },
       data: { NumSocio: cveUsuario }
@@ -290,7 +292,7 @@ export default class ToolsService {
    * @returns {Promise<string>} Resultados de búsqueda
    */
   async buscarDocumentosNova(consulta, userInfo, userToken) {
-    const userId = userInfo?.usuario || 'unknown';
+    const userId = userInfo?.CveUsuario || userInfo?.usuario || 'unknown';
 
     try {
       if (!documentService?.isAvailable?.()) {
@@ -303,7 +305,7 @@ export default class ToolsService {
       const resultado = await documentService.buscarDocumentos(consulta, userId, {
         perfil: userInfo?.perfil || null,  // ← WebChat pasa perfil explícito
         userToken: userToken,               // ← Token para Teams
-        numSocio: userInfo?.usuario         // ← NumSocio para Teams
+        numSocio: userInfo?.CveUsuario || userInfo?.usuario  // ← NumSocio
       });
 
       if (!resultado || typeof resultado !== 'string') {
@@ -387,10 +389,12 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
    * @returns {string} Datos RAW estructurados para que la IA interprete
    */
   formatearSaldo(saldoData, userInfo) {
+    const nombreUsuario = userInfo.nombre || userInfo.CveUsuario || userInfo.usuario;
+
     // Verificar que tengamos datos
     if (!saldoData || typeof saldoData !== 'object') {
       console.log('❌ [formatearSaldo] Sin datos válidos');
-      return `No se pudo obtener información de saldo para ${userInfo.nombre || userInfo.usuario}`;
+      return `No se pudo obtener información de saldo para ${nombreUsuario}`;
     }
 
     // Extraer ahorros y préstamos
@@ -401,7 +405,7 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
 
     // Si no hay datos de ninguno de los dos
     if (!hasAhorros && !hasPrestamos) {
-      return `No se encontraron productos de ahorro ni préstamos asociados al usuario ${userInfo.nombre || userInfo.usuario}. ` +
+      return `No se encontraron productos de ahorro ni préstamos asociados al usuario ${nombreUsuario}. ` +
         'Es posible que:\n' +
         '- El usuario no tenga productos activos\n' +
         '- Los productos no estén asociados correctamente en el sistema\n' +
@@ -409,7 +413,7 @@ Si necesitas información sobre las tasas de interés actuales, puedo consultarl
     }
 
     // Construir output con TODA la información disponible
-    let output = `Información financiera completa para ${userInfo.nombre || userInfo.usuario}:\n\n`;
+    let output = `Información financiera completa para ${nombreUsuario}:\n\n`;
     output += '═══════════════════════════════════════════════════════════\n\n';
 
     // Sección de AHORROS

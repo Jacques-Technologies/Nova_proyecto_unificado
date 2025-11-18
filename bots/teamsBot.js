@@ -117,7 +117,7 @@ export default class TeamsBot extends DialogBot {
                 return await next();
             }
 
-            // 4. TODO mensaje autenticado → IA
+            // 4. Mensaje autenticado → IA
             await this.processWithAI(context, text, userId);
 
         } catch (error) {

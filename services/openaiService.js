@@ -120,7 +120,7 @@ export default class AzureOpenAIService {
       }
 
       // userId para logs (fallback si no se proporciona explícitamente)
-      const logUserId = userId || userInfo?.usuario || 'unknown';
+      const logUserId = userId || userInfo?.CveUsuario || userInfo?.usuario || 'unknown';
       console.log(`💬 [${logUserId}] Procesando mensaje: "${mensaje.substring(0, 50)}..."`);
 
       // Preparar mensajes para OpenAI (pasamos userId explícito para Cosmos)
@@ -207,9 +207,10 @@ export default class AzureOpenAIService {
 
     // System message con contexto actual
     const fechaActual = DateTime.now().setZone('America/Mexico_City');
+    const userNumero = userInfo?.CveUsuario || userInfo?.usuario || 'desconocido';
     const userContext = userInfo?.nombre
-      ? `Usuario: ${userInfo.nombre} (${userInfo.usuario})`
-      : 'Usuario no identificado';
+      ? `Usuario: ${userInfo.nombre} (${userNumero})`
+      : `Usuario: ${userNumero}`;
 
     const systemContent = `Tu nombre es NovaBot, y eres un Asistente virtual inteligente para la institución financiera Nova.
 
@@ -232,7 +233,7 @@ INSTRUCCIONES:
 
 IMPORTANTE - SEGURIDAD Y PRIVACIDAD:
 • NUNCA proporciones información financiera, saldos, o datos personales de otros usuarios
-• SOLO puedes consultar información del usuario autenticado actualmente (${userInfo?.usuario || 'ninguno'})
+• SOLO puedes consultar información del usuario autenticado actualmente (${userInfo?.CveUsuario || userInfo?.usuario || 'ninguno'})
 • Si el usuario menciona otro número de socio (esposo, familiar, compañero, etc.):
   - RECHAZA la solicitud de manera educada
   - Explica: "Por motivos de privacidad y seguridad, solo puedo consultar tu información. Si tu [familiar/esposo/etc.] necesita consultar su información, debe iniciar sesión con su propio usuario."
@@ -351,7 +352,7 @@ IMPORTANTE - REDIRECCIÓN AL PORTAL WEB:
    * @returns {Promise<Object>} Respuesta final formateada
    */
   async procesarHerramientas(messageResponse, mensajesPrevios, userToken, userInfo, conversationId, fullUserId) {
-    const userId = userInfo?.usuario || 'unknown';
+    const userId = userInfo?.CveUsuario || userInfo?.usuario || 'unknown';
     const resultados = [];
     const toolResultsMap = {}; // Para guardar resultados por tool_call_id
 

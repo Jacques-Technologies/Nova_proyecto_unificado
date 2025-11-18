@@ -46,3 +46,6 @@ lib/
 *.log
 logs/
 backend/services/log/register/*.log
+
+# carpeta de pruebas locales
+/pruebas

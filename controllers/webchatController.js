@@ -21,13 +21,20 @@ const MAX_HISTORY_MESSAGES = 10;
 // INIT: Inicializar chat (devuelve mensaje de bienvenida)
 // GET/POST /api/webchat/init
 // Query/Body: token, perfil?
+// Nota: perfil es case-insensitive
 // ============================================================
 export async function init(req, res) {
     try {
         const token = req.query.token || req.body?.token;
-        const perfil = req.query.perfil || req.body?.perfil || null;
+        // Case-insensitive: perfil, Perfil, PERFIL
+        const perfil = req.query.perfil ?? req.body?.perfil ?? req.body?.Perfil ?? null;
 
-        console.log(`📝 WebChat INIT - Token: ${token?.substring(0, 8)}..., Perfil: ${perfil || 'ninguno'}`);
+        console.log(`📝 WebChat INIT - Request completo:`, {
+            token: token ? `${token.substring(0, 12)}...` : 'NO ENVIADO',
+            perfil: perfil,
+            body: req.body ? Object.keys(req.body) : [],
+            query: req.query ? Object.keys(req.query) : []
+        });
 
         // Validar token
         if (!token) {
@@ -71,12 +78,30 @@ export async function init(req, res) {
 // ASK: Procesar mensaje del usuario
 // POST /api/webchat/ask
 // Body: { token, content, perfil?, CveUsuario?, NumRI? }
+// Nota: perfil, CveUsuario y NumRI son case-insensitive
 // ============================================================
 export async function ask(req, res) {
     try {
-        const { token, content, perfil, CveUsuario, NumRI } = req.body || {};
+        const body = req.body || {};
 
-        console.log(`📝 WebChat ASK - Token: ${token?.substring(0, 8)}..., Perfil: ${perfil || 'ninguno'}, Msg: "${content?.substring(0, 50)}..."`);
+        // Extraer parámetros de forma case-insensitive (usando ?? para permitir "0", "", false)
+        const token = body.token;
+        const content = body.content;
+        // Case-insensitive: perfil, Perfil, PERFIL (permitir "0", "1", "2", etc.)
+        const perfil = body.perfil ?? body.Perfil ?? body.PERFIL ?? null;
+        // Case-insensitive: CveUsuario, cveUsuario, cveusuario
+        const CveUsuario = body.CveUsuario ?? body.cveUsuario ?? body.cveusuario ?? body.CVEUSUARIO ?? null;
+        // Case-insensitive: NumRI, numRi, numri, NUMRI
+        const NumRI = body.NumRI ?? body.numRi ?? body.numri ?? body.NUMRI ?? null;
+
+        console.log(`📝 WebChat ASK - Request completo:`, {
+            token: token ? `${token.substring(0, 12)}...` : 'NO ENVIADO',
+            content: content ? `"${content.substring(0, 40)}..."` : 'NO ENVIADO',
+            perfil: perfil,
+            CveUsuario: CveUsuario,
+            NumRI: NumRI,
+            bodyKeys: Object.keys(body)
+        });
 
         // Validar parámetros
         if (!token || !content) {
@@ -136,7 +161,7 @@ export async function ask(req, res) {
             // Preparar contexto de usuario
             const userContext = {
                 usuario: userId,  // Para WebChat = token completo (por consistencia)
-                perfil: perfil || 'general',
+                perfil: perfil ?? 'general',  // Default solo si es null/undefined
                 CveUsuario: CveUsuario,
                 NumRI: NumRI
             };
